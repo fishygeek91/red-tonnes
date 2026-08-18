@@ -68,6 +68,9 @@ step(state, dtSols, actions) => nextState   // src/lib/sim/step.ts
   fail ~3× the fleet baseline), crew maintenance hours are a real constraint,
   and a breathing-gas shortfall taps the LOX farm before anyone suffocates.
 - Keyboard: **space** = play/pause, **N** = jump to next window.
+- **Sound** (footer) arms a procedural bed — thin wind that rises with τ,
+  an ISRU hum that dies when power is shed, landing and departure rumbles.
+  No samples; WebAudio only, created on the button click.
 - Click any structure in the city for its live datasheet — output, bottleneck,
   and failure hazard, computed with the engine's own formulas. **Trends**
   opens six scrubbable history charts, and dragging the timeline replays the
@@ -79,6 +82,11 @@ step(state, dtSols, actions) => nextState   // src/lib/sim/step.ts
   when your clock crosses them, and their runs draw as dashed lines on the
   Methalox and Loop charts. The final scorecard prints the race verdict.
   No backend: the ghost is derived entirely from the permalink's replay.
+- **Accident investigations.** A terminal lose (STARVED, STRANDED, BLACKOUT)
+  walks the recorded history backwards and names the causal chain — storm
+  onset, power shed, ISRU stall, ration exhaustion — as a short NTSB-style
+  brief. Click a finding to rewind the city to that sol; **Copy report**
+  pastes the markdown. Shared disasters open with the same report.
 
 ## Where the constants live
 
@@ -106,7 +114,7 @@ pool climbs as the loop closes; Earth-food fraction falls to zero. By sol
 ship burns for home on local propellant. Click **Brief** to copy the
 mission-brief markdown, then open **Sources** to show the receipts. To show a
 failure instead, start a New Game with the "Food first" manifest and watch the
-departure window get missed.
+departure window get missed — the accident investigation names the chain.
 
 ## Verify the engine headlessly
 
@@ -115,6 +123,7 @@ npx tsx scripts/smoke.ts
 ```
 
 Runs two windows, checks determinism and that no pool goes non-finite,
-verifies the share codec and ghost-racing helpers, and prints the mission
-brief. `npx tsx scripts/verify-ghost.ts` drives a real browser through a
-shared link and a ghost race (needs `npm run dev` or `next start` running).
+verifies the share codec, ghost-racing helpers, accident investigations,
+and the audio-bed parameter map, and prints the mission brief.
+`npx tsx scripts/verify-ghost.ts` drives a real browser through a shared
+link and a ghost race (needs `npm run dev` or `next start` running).

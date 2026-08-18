@@ -14,6 +14,7 @@ import { Ledgers } from '../components/Ledgers';
 import { PlanetOverlay } from '../components/PlanetOverlay';
 import { SetupModal } from '../components/SetupModal';
 import { SharedRunNotice } from '../components/SharedRunNotice';
+import { SimAudio } from '../components/SimAudio';
 import { SimClock } from '../components/SimClock';
 import { SourcesDrawer } from '../components/SourcesDrawer';
 import { TimeScrubber } from '../components/TimeScrubber';
@@ -35,6 +36,7 @@ export default function Page(): React.ReactElement {
   return (
     <div className="h-full flex flex-col relative">
       <SimClock />
+      <SimAudio />
       <TopBar />
       <main className="flex-1 flex min-h-0 relative">
         <div className="w-[300px] shrink-0 flex flex-col panel border-r border-[var(--line)] relative">

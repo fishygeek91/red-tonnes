@@ -45,6 +45,8 @@ export function TimeScrubber(): React.ReactElement {
   const jumpToNextWindow = useSimStore((s) => s.jumpToNextWindow);
   const showTrends = useSimStore((s) => s.showTrends);
   const setShowTrends = useSimStore((s) => s.setShowTrends);
+  const audioEnabled = useSimStore((s) => s.audioEnabled);
+  const setAudioEnabled = useSimStore((s) => s.setAudioEnabled);
 
   const h = sim.history;
   const { tauPath, fuelPath, ghostFuelPath, maxFuel } = useMemo(() => {
@@ -115,6 +117,17 @@ export function TimeScrubber(): React.ReactElement {
         title="Toggle the history charts drawer (power, fuel, calories, dust, loop closure)"
       >
         Trends
+      </button>
+      <button
+        onClick={() => setAudioEnabled(!audioEnabled)}
+        className={`px-2 py-1.5 text-[10px] border uppercase tracking-widest ${
+          audioEnabled
+            ? 'border-[var(--rust-hot)] text-[var(--rust-hot)]'
+            : 'border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)] hover:border-[var(--rust)]'
+        }`}
+        title="Procedural Mars bed — thin wind, ISRU hum, landing rumbles. No samples."
+      >
+        Sound
       </button>
 
       <div className="flex-1 relative h-10">

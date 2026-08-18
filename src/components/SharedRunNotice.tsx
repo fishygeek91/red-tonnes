@@ -55,8 +55,8 @@ export function SharedRunNotice(): React.ReactElement | null {
           {runLost ? (
             <>
               You are watching a shared run that ended in{' '}
-              <span className="text-[var(--fail)]">{endState}</span> — scrub the timeline to see
-              where it went wrong, then race the same seed and survive it.
+              <span className="text-[var(--fail)]">{endState}</span> — the investigation names the
+              chain (click a finding to rewind), then race the same seed and survive it.
             </>
           ) : (
             <>

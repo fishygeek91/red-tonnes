@@ -4,13 +4,15 @@
  * history) and that nothing goes NaN.
  */
 
+import { audioParamsFromState } from '../src/lib/audio/params';
 import { decodeRunLog, encodeRunLog } from '../src/lib/share/encode';
 import { ghostFromReplay, ghostFuelLeadSols, ghostSnapshotAt, raceVerdict } from '../src/lib/share/ghost';
 import { appendRunAction, emptyRunLog, replayRun } from '../src/lib/share/recording';
 import { scorecard } from '../src/lib/share/scorecard';
 import { missionBrief } from '../src/lib/sim/brief';
 import { topBarStats } from '../src/lib/sim/derive';
-import { MANIFEST_TEMPLATES, createInitialState } from '../src/lib/sim/state';
+import { formatPostMortem, investigate, type PostMortem } from '../src/lib/sim/postmortem';
+import { MANIFEST_TEMPLATES, createInitialState, type SimState } from '../src/lib/sim/state';
 import type { SimActions } from '../src/lib/sim/step';
 import { step } from '../src/lib/sim/step';
 
@@ -204,6 +206,96 @@ async function shareChecks(): Promise<void> {
   console.log('fueled self-race is a dead heat:', fueledOk, `(${fueledVerdict ?? 'null'})`);
   if (!frozen || !lookupOk || !paceOk || !verdictOk || !fueledOk) {
     throw new Error('ghost racing checks failed');
+  }
+
+  // ---- accident-investigation checks ----------------------------------------
+  // A living city (and the demo seed, still operating at sol 1520) must not
+  // produce a report. Each terminal lose state must.
+  const living = investigate(createInitialState({ seed: 1, siteId: 'arcadia', templateId: 'balanced' }));
+  const demoLiving = investigate(a);
+  if (living !== null || demoLiving !== null) {
+    throw new Error('investigate() reported on a city that had not been lost');
+  }
+
+  /** Assert a real report: dated chain, terminal last, sols in range, markdown. */
+  const mustReport = (s: SimState, expected: SimState['endState']): PostMortem => {
+    const report = investigate(s);
+    if (report === null) {
+      throw new Error(`expected ${expected} report, got null (endState=${s.endState || 'running'})`);
+    }
+    if (report.endState !== expected) {
+      throw new Error(`report endState ${report.endState} !== ${expected}`);
+    }
+    if (report.chain.length < 2) {
+      throw new Error(`${expected} chain too short (${report.chain.length})`);
+    }
+    const last = report.chain[report.chain.length - 1];
+    if (last.kind !== 'terminal') {
+      throw new Error(`${expected} chain did not end on a terminal finding`);
+    }
+    const solsOk = report.chain.every((f) => f.sol >= 0 && f.sol <= s.sol);
+    if (!solsOk) {
+      throw new Error(`${expected} chain has a sol outside [0, ${s.sol}]`);
+    }
+    const md = formatPostMortem(report);
+    if (!md.includes(report.caseId) || !md.includes('Probable cause')) {
+      throw new Error(`${expected} markdown missing case id or probable cause`);
+    }
+    return report;
+  };
+
+  // STARVED: wipe rations and greenhouses so the hunger clock is the only story.
+  let starved: SimState = createInitialState({ seed: 1, siteId: 'arcadia', templateId: 'propellant' });
+  starved = {
+    ...starved,
+    inv: { ...starved.inv, earthFoodKg: 40, localFoodKg: {} },
+    structures: { ...starved.structures, ghBuried: 0, ghInflatable: 0, ghRigid: 0 },
+  };
+  starved = step(starved, 80, {});
+  const starvedReport = mustReport(starved, 'STARVED');
+
+  // STRANDED: the documented "Food first" miss of the first departure window.
+  let stranded: SimState = createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'food' });
+  stranded = step(stranded, 1360, {});
+  const strandedReport = mustReport(stranded, 'STRANDED (NO METHALOX)');
+
+  // BLACKOUT: same demo storm year, solar-only — no nuclear floor.
+  let blackout: SimState = createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'balanced' });
+  blackout = { ...blackout, structures: { ...blackout.structures, nuclear: 0 } };
+  blackout = step(blackout, 520, {});
+  const blackoutReport = mustReport(blackout, 'DUST YEAR BLACKOUT');
+
+  console.log('\n--- post-mortem checks ---');
+  console.log('living city is not an accident:', living === null && demoLiving === null);
+  console.log('STARVED:', starvedReport.caseId, '—', starvedReport.probableCause);
+  console.log('STRANDED:', strandedReport.caseId, '—', strandedReport.probableCause);
+  console.log('BLACKOUT:', blackoutReport.caseId, '—', blackoutReport.probableCause);
+  console.log('\n' + formatPostMortem(strandedReport));
+
+  // ---- audio-bed parameter map ----------------------------------------------
+  // Storm sols must be louder and darker than a quiet sol; a blackout must
+  // kill the plant hum. No AudioContext in Node — just the pure mapping.
+  const quietSnap = a.history.find((h) => h.tau < 0.8);
+  const stormSnap = a.history.reduce((best, h) => (h.tau > best.tau ? h : best));
+  if (quietSnap === undefined) {
+    throw new Error('demo history had no quiet sol to compare audio against');
+  }
+  const quietAudio = audioParamsFromState(a, quietSnap.sol);
+  const stormAudio = audioParamsFromState(a, stormSnap.sol);
+  const blackAudio = audioParamsFromState(blackout);
+  const audioFinite = [quietAudio, stormAudio, blackAudio].every((p) =>
+    Object.values(p).every((v) => Number.isFinite(v) && v >= 0),
+  );
+  const stormLouder = stormAudio.windGain > quietAudio.windGain;
+  const stormDarker = stormAudio.windCutoffHz < quietAudio.windCutoffHz;
+  const blackoutSilent = blackAudio.humGain === 0 && blackAudio.lifeGain === 0;
+  console.log('\n--- audio checks ---');
+  console.log('params finite and non-negative:', audioFinite);
+  console.log('storm wind louder than clear:', stormLouder);
+  console.log('storm wind darker than clear:', stormDarker);
+  console.log('blackout kills plant and life tones:', blackoutSilent);
+  if (!audioFinite || !stormLouder || !stormDarker || !blackoutSilent) {
+    throw new Error('audio-bed parameter map failed');
   }
 }
 

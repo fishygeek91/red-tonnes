@@ -50,6 +50,8 @@ interface SimStore {
   showTrends: boolean;
   /** Frozen snapshot of a shared run being raced; null = no ghost. */
   ghost: GhostRun | null;
+  /** Procedural audio bed armed (created on the Sound button — a user gesture). */
+  audioEnabled: boolean;
 
   /** Start a new game from the setup screen. */
   newGame: (seed: number, siteId: string, templateId: string) => void;
@@ -89,6 +91,8 @@ interface SimStore {
   setInspect: (id: InspectId | null) => void;
   /** Toggle the Trends drawer. */
   setShowTrends: (v: boolean) => void;
+  /** Arm or silence the procedural audio bed. */
+  setAudioEnabled: (v: boolean) => void;
 }
 
 /** Default demo seed: chosen so a global dust storm hits mid–window 0 (onset ~sol 420) while the nuclear floor keeps the city alive — the demo tells the whole story by itself. */
@@ -108,6 +112,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   inspectId: null,
   showTrends: false,
   ghost: null,
+  audioEnabled: false,
 
   newGame: (seed, siteId, templateId) => {
     set({
@@ -254,4 +259,5 @@ export const useSimStore = create<SimStore>((set, get) => ({
   setShowOverlay: (v) => set({ showOverlay: v }),
   setInspect: (id) => set({ inspectId: id }),
   setShowTrends: (v) => set({ showTrends: v }),
+  setAudioEnabled: (v) => set({ audioEnabled: v }),
 }));

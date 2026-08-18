@@ -17,7 +17,9 @@ close its waste loops, and fuel its own Starships, while the sky stays thin.
   2018): accessible CO2 tops out near 20 mbar. The city para-terraforms;
   Mars stays red.
 
-A clear sol — greenhouses glowing, ISRU humming:
+A clear sol — Starships on the pads, greenhouses glowing, ISRU humming.
+Ship traffic is real: arrivals descend on landing burns when a window opens,
+and a fueled ship climbs out at the departure sol:
 
 ![Clear day at Arcadia Planitia, sol 337](docs/screenshot-clear.png)
 

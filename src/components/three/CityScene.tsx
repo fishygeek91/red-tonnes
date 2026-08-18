@@ -14,6 +14,7 @@
 
 import { OrbitControls } from '@react-three/drei';
 import { Canvas, useFrame } from '@react-three/fiber';
+import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { getSite, opticalDepthAtSol } from '../../lib/sites';
@@ -22,6 +23,7 @@ import { STRUCTURES } from '../../lib/structures';
 import { clamp, safeDiv } from '../../lib/types';
 import { sunlightFraction } from '../../lib/sim/step';
 import { useSimStore } from '../../store/useSimStore';
+import { Starships } from './Starships';
 
 /** One fixed sun direction for the whole scene (light, shadows, sky disc). */
 const SUN_DIR = new THREE.Vector3(0.55, 0.52, 0.42).normalize();
@@ -38,7 +40,7 @@ const MAT = {
   padRing: new THREE.MeshStandardMaterial({
     color: '#3a3028',
     emissive: '#e2661a',
-    emissiveIntensity: 0.85,
+    emissiveIntensity: 1.6,
     roughness: 0.6,
   }),
   panel: new THREE.MeshStandardMaterial({ color: '#1d2c3c', roughness: 0.25, metalness: 0.4 }),
@@ -46,7 +48,7 @@ const MAT = {
   habitatWindow: new THREE.MeshStandardMaterial({
     color: '#241a10',
     emissive: '#ffd9a0',
-    emissiveIntensity: 1.1,
+    emissiveIntensity: 1.8,
     roughness: 0.4,
   }),
   drum: new THREE.MeshStandardMaterial({ color: '#5d6b46', roughness: 0.8 }),
@@ -292,12 +294,35 @@ function Rocks(): React.ReactElement {
   );
 }
 
+/** Soft radial sprite for dust points, so motes read round, not square. */
+function buildDustSprite(): THREE.CanvasTexture | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return null;
+  }
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.4)');
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(canvas);
+}
+
 /** Wind-blown dust: a drifting point field that fades in with optical depth. */
 function DustParticles(props: { tau: number }): React.ReactElement {
   const count = 900;
   const box = { x: 180, y: 26, z: 180 };
   const attrRef = useRef<THREE.BufferAttribute>(null);
   const matRef = useRef<THREE.PointsMaterial>(null);
+  const sprite = useMemo(() => buildDustSprite(), []);
   const positions = useMemo(() => {
     const arr = new Float32Array(count * 3);
     let rng: RngState = rngFromSeed(4242);
@@ -350,13 +375,62 @@ function DustParticles(props: { tau: number }): React.ReactElement {
       <pointsMaterial
         ref={matRef}
         color="#d08347"
-        size={0.4}
+        size={0.5}
+        map={sprite ?? undefined}
+        alphaTest={0.01}
         sizeAttenuation
         transparent
         opacity={0}
         depthWrite={false}
       />
     </points>
+  );
+}
+
+/** Ice-hauler rover: loops between the ice mine and the ISRU plant. */
+function Rover(): React.ReactElement {
+  const group = useRef<THREE.Group>(null);
+  useFrame((state) => {
+    const g = group.current;
+    if (!g) {
+      return;
+    }
+    // Parametric ellipse between the mine (-26, 14) and the plant (-14, 2).
+    const t = state.clock.elapsedTime * 0.22;
+    const x = -20 + Math.cos(t) * 9;
+    const z = 8 + Math.sin(t) * 5.5;
+    g.position.set(x, terrainHeight(x, z) + 0.42, z);
+    // Face along the direction of travel (velocity of the ellipse).
+    g.rotation.y = Math.atan2(Math.sin(t) * 9, Math.cos(t) * 5.5);
+  });
+  return (
+    <group ref={group}>
+      <mesh position={[0, 0.1, 0]} material={MAT.rustSteel} castShadow>
+        <boxGeometry args={[1.1, 0.35, 0.7]} />
+      </mesh>
+      {/* ice cargo bin riding behind the cab */}
+      <mesh position={[-0.15, 0.38, 0]} material={MAT.iceTank} castShadow>
+        <boxGeometry args={[0.6, 0.25, 0.55]} />
+      </mesh>
+      {/* cab beacon */}
+      <mesh position={[0.42, 0.36, 0]}>
+        <sphereGeometry args={[0.06, 8, 8]} />
+        <meshStandardMaterial color="#3a1505" emissive="#e2661a" emissiveIntensity={2.2} />
+      </mesh>
+      {/* wheels */}
+      {[-0.35, 0.35].map((wx) =>
+        [-0.42, 0.42].map((wz) => (
+          <mesh
+            key={`w-${wx}-${wz}`}
+            position={[wx, -0.12, wz]}
+            rotation={[Math.PI / 2, 0, 0]}
+            material={MAT.pad}
+          >
+            <cylinderGeometry args={[0.16, 0.16, 0.12, 10]} />
+          </mesh>
+        )),
+      )}
+    </group>
   );
 }
 
@@ -390,7 +464,7 @@ function GreenhouseStreet(props: {
   // Material mutation happens inside the frame loop, not during render.
   useFrame(() => {
     if (matRef.current) {
-      matRef.current.emissiveIntensity = 0.08 + props.glow * 0.9;
+      matRef.current.emissiveIntensity = 0.08 + props.glow * 1.35;
     }
   });
   return (
@@ -451,8 +525,8 @@ function City(): React.ReactElement {
         <boxGeometry args={[14.5, 0.5, 8.5]} />
       </mesh>
 
-      {/* landing pads with beacon rings */}
-      <Row count={Math.max(0, st.pad)} spacing={9} origin={[16, 0.02, -22]}>
+      {/* landing pads with beacon rings (aligned with the Starship slots) */}
+      <Row count={Math.max(0, st.pad)} spacing={9} origin={[13, 0.02, -18]}>
         {(i, pos) => (
           <group key={`pad-${i}`} position={pos}>
             <mesh material={MAT.pad} receiveShadow>
@@ -563,7 +637,7 @@ function City(): React.ReactElement {
           </mesh>
           <mesh position={[2.1, 0.5, 0]}>
             <boxGeometry args={[0.6, 1, 1.2]} />
-            <meshStandardMaterial color="#183820" emissive="#59c96a" emissiveIntensity={1.2} />
+            <meshStandardMaterial color="#183820" emissive="#59c96a" emissiveIntensity={1.8} />
           </mesh>
         </group>
       ))}
@@ -618,8 +692,10 @@ function DustRig(): React.ReactElement {
   const daylight = clamp(sun / 0.5, 0, 1);
   const fogColor = useMemo(() => new THREE.Color(), []);
   fogColor.copy(SKY_STORM.horizon).lerp(SKY_CLEAR.horizon, daylight);
-  const fogNear = 18 + daylight * 40;
-  const fogFar = 45 + 260 * Math.pow(daylight, 1.4);
+  // Floors sized so the city (camera distance ~53) stays a legible ghost in
+  // the worst global storm instead of vanishing into the murk entirely.
+  const fogNear = 24 + daylight * 36;
+  const fogFar = 78 + 250 * Math.pow(daylight, 1.4);
   return (
     <>
       <SkyDome daylight={daylight} />
@@ -655,7 +731,7 @@ export function CityScene(): React.ReactElement {
       <Canvas
         shadows="soft"
         dpr={[1, 2]}
-        camera={{ position: [26, 22, 26], fov: 32, near: 0.1, far: 700 }}
+        camera={{ position: [38, 26, 24], fov: 40, near: 0.1, far: 700 }}
         gl={{ antialias: true }}
         style={{ background: '#1c0f0d' }}
       >
@@ -663,13 +739,20 @@ export function CityScene(): React.ReactElement {
         <Terrain />
         <Rocks />
         <City />
+        <Starships />
+        <Rover />
         <OrbitControls
-          target={[0, 0, 0]}
+          target={[6, 0, -9]}
           maxPolarAngle={Math.PI / 2.2}
           minDistance={12}
           maxDistance={90}
           enableDamping
         />
+        {/* selective bloom: only emissives past the threshold glow (greenhouses,
+            beacons, engine plumes, the sun disc) — the rest stays crisp */}
+        <EffectComposer multisampling={4}>
+          <Bloom luminanceThreshold={0.9} mipmapBlur intensity={0.55} radius={0.6} />
+        </EffectComposer>
       </Canvas>
       {/* crisp cinematic vignette; pure CSS, zero GPU cost */}
       <div className="absolute inset-0 pointer-events-none scene-vignette" />

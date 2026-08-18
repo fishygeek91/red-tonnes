@@ -1,5 +1,7 @@
 # RED TONNES
 
+**Play it now: [fishygeek91.github.io/red-tonnes](https://fishygeek91.github.io/red-tonnes/)**
+
 A first-principles Mars city simulator. Not "paint Mars green" — a living
 mass/energy/time model of how a red planet grows a city that can feed people,
 close its waste loops, and fuel its own Starships, while the sky stays thin.

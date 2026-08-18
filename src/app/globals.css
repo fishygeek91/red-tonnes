@@ -33,8 +33,10 @@ body {
 }
 
 .panel {
-  background: var(--panel);
+  /* faint vertical falloff + a hairline top highlight give the chrome depth */
+  background: linear-gradient(180deg, #17120f 0%, #120e0b 100%);
   border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
 .panel-title {
@@ -55,7 +57,11 @@ body {
   height: 6px;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--line);
+  background: #3a2d24;
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #4f3c2e;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
@@ -67,6 +73,24 @@ input[type='range'] {
 
 button {
   cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+button:hover {
+  box-shadow: 0 0 10px rgba(226, 102, 26, 0.12);
+}
+
+/* wordmark: a restrained hot-rust halo */
+.brand-glow {
+  text-shadow: 0 0 14px rgba(226, 102, 26, 0.45);
+}
+
+/* cinematic edge falloff over the 3D viewport; pure CSS, zero GPU cost */
+.scene-vignette {
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(5, 2, 1, 0.32) 100%);
 }
 
 @keyframes pulse-glow {

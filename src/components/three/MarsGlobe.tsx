@@ -3,11 +3,12 @@
 /**
  * Stylized but geographically plausible Mars globe: a procedurally generated
  * hypsometric texture (value noise standing in for MOLA relief, with a
- * Hellas-like low, a Tharsis-like high, and polar caps), plus markers for
- * the preset sites. No cute cartoon Mars; the sky stays thin.
+ * Hellas-like low, a Tharsis-like high, and polar caps), a fresnel atmosphere
+ * rim (6 mbar deserves barely a halo), a slow starfield, and markers for the
+ * preset sites.
  */
 
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, Stars } from '@react-three/drei';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
@@ -44,28 +45,37 @@ function fbm(x: number, y: number): number {
   return v;
 }
 
-/** Build the hypsometric Mars texture once. */
+/** Build the hypsometric Mars texture once. (No bump map: derivative lighting
+ * amplifies the value-noise lattice into cross-hatch artifacts.) */
 function buildMarsTexture(): THREE.CanvasTexture | null {
   if (typeof document === 'undefined') {
     return null;
   }
   const w = 512;
   const h = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
+  const colorCanvas = document.createElement('canvas');
+  colorCanvas.width = w;
+  colorCanvas.height = h;
+  const colorCtx = colorCanvas.getContext('2d');
+  if (!colorCtx) {
     return null;
   }
-  const img = ctx.createImageData(w, h);
+  const colorImg = colorCtx.createImageData(w, h);
   for (let y = 0; y < h; y += 1) {
     const lat = 90 - (y / h) * 180;
     for (let x = 0; x < w; x += 1) {
       const lon = (x / w) * 360 - 180;
-      let elev = fbm(x / 60, y / 60) - 0.5;
-      // Crustal dichotomy: northern lowlands are smoother and lower.
-      elev += lat > 10 ? -0.18 : 0.08;
+      // Sample noise on a circle in the noise plane so the texture wraps
+      // seamlessly at lon ±180 (no vertical seam down the globe).
+      const lonRad = (lon * Math.PI) / 180;
+      const nx = 5 + Math.cos(lonRad) * 4;
+      const nz = 5 + Math.sin(lonRad) * 4;
+      const ny = (lat / 90) * 3;
+      let elev = fbm(nx + ny * 1.9, nz - ny * 1.4) - 0.5;
+      // Crustal dichotomy: northern lowlands are smoother and lower,
+      // feathered over ~25 degrees of latitude instead of a hard step.
+      const dichotomy = Math.min(1, Math.max(0, (lat + 5) / 25));
+      elev += 0.08 - 0.26 * dichotomy;
       // Hellas-like basin (~lat -42, lon 70) and Tharsis-like bulge (~lat 0, lon -110).
       const dHellas = Math.hypot(lat + 42, (lon - 70) * 0.7);
       elev -= 0.5 * Math.exp(-(dHellas * dHellas) / 500);
@@ -82,16 +92,17 @@ function buildMarsTexture(): THREE.CanvasTexture | null {
       g = g * (1 - cap) + 240 * cap;
       b = b * (1 - cap) + 245 * cap;
       const i = (y * w + x) * 4;
-      img.data[i] = r;
-      img.data[i + 1] = g;
-      img.data[i + 2] = b;
-      img.data[i + 3] = 255;
+      colorImg.data[i] = r;
+      colorImg.data[i + 1] = g;
+      colorImg.data[i + 2] = b;
+      colorImg.data[i + 3] = 255;
     }
   }
-  ctx.putImageData(img, 0, 0);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  colorCtx.putImageData(colorImg, 0, 0);
+  const map = new THREE.CanvasTexture(colorCanvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 4;
+  return map;
 }
 
 /** Convert lat/lon (degrees) to a position on a unit sphere. */
@@ -105,12 +116,35 @@ function latLonToVec3(latDeg: number, lonDeg: number, radius: number): THREE.Vec
   );
 }
 
-/** The spinning globe with site markers. */
+/** Fresnel-style limb glow: brightest at the planet edge, fading outward. */
+const ATMO_VERTEX = /* glsl */ `
+  varying vec3 vNormal;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const ATMO_FRAGMENT = /* glsl */ `
+  varying vec3 vNormal;
+  uniform vec3 glowColor;
+  void main() {
+    // Back-face normals near the limb are perpendicular to the view axis;
+    // the small constant keeps the halo hugging the disc, as 6 mbar should.
+    float intensity = pow(max(0.22 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 0.0), 4.0);
+    gl_FragColor = vec4(glowColor, 1.0) * intensity * 2.2;
+  }
+`;
+
+/** The spinning globe with site markers and its whisper-thin atmosphere. */
 function Globe(): React.ReactElement {
   const siteId = useSimStore((s) => s.sim.siteId);
   const texture = useMemo(() => buildMarsTexture(), []);
   const group = useRef<THREE.Group>(null);
-  const marker = useRef<THREE.Mesh>(null);
+  const marker = useRef<THREE.Group>(null);
+  const atmoUniforms = useMemo(
+    () => ({ glowColor: { value: new THREE.Color('#e08a52') } }),
+    [],
+  );
 
   useFrame((state, delta) => {
     if (group.current) {
@@ -123,9 +157,10 @@ function Globe(): React.ReactElement {
   });
 
   return (
-    <group ref={group}>
+    // Mars holds a ~25 degree axial tilt; the markers ride along.
+    <group ref={group} rotation={[0, 0, -0.22]}>
       <mesh>
-        <sphereGeometry args={[1, 48, 48]} />
+        <sphereGeometry args={[1, 64, 64]} />
         {texture ? (
           <meshStandardMaterial map={texture} roughness={0.95} metalness={0} />
         ) : (
@@ -134,17 +169,38 @@ function Globe(): React.ReactElement {
       </mesh>
       {/* whisper-thin atmosphere: 6 mbar deserves barely a rim */}
       <mesh>
-        <sphereGeometry args={[1.02, 32, 32]} />
-        <meshBasicMaterial color="#d8956a" transparent opacity={0.045} side={THREE.BackSide} />
+        <sphereGeometry args={[1.13, 48, 48]} />
+        <shaderMaterial
+          side={THREE.BackSide}
+          transparent
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          uniforms={atmoUniforms}
+          vertexShader={ATMO_VERTEX}
+          fragmentShader={ATMO_FRAGMENT}
+        />
       </mesh>
       {SITES.map((s) => {
         const pos = latLonToVec3(s.latitudeDeg, s.longitudeDeg, 1.01);
         const active = s.id === siteId;
+        // Orient the halo ring so it lies flat on the sphere surface.
+        const outward = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(0, 0, 1),
+          pos.clone().normalize(),
+        );
         return (
-          <mesh key={s.id} position={pos} ref={active ? marker : undefined}>
-            <sphereGeometry args={[active ? 0.028 : 0.014, 8, 8]} />
-            <meshBasicMaterial color={active ? '#59c96a' : '#7cc7e8'} />
-          </mesh>
+          <group key={s.id} position={pos} ref={active ? marker : undefined}>
+            <mesh>
+              <sphereGeometry args={[active ? 0.024 : 0.013, 8, 8]} />
+              <meshBasicMaterial color={active ? '#59c96a' : '#7cc7e8'} />
+            </mesh>
+            {active ? (
+              <mesh quaternion={outward}>
+                <ringGeometry args={[0.04, 0.055, 32]} />
+                <meshBasicMaterial color="#59c96a" transparent opacity={0.7} side={THREE.DoubleSide} />
+              </mesh>
+            ) : null}
+          </group>
         );
       })}
     </group>
@@ -155,9 +211,12 @@ function Globe(): React.ReactElement {
 export function MarsGlobe(): React.ReactElement {
   return (
     <div className="h-[240px] shrink-0 relative">
-      <Canvas camera={{ position: [0, 0.6, 2.4], fov: 40 }} gl={{ antialias: true }}>
+      <Canvas camera={{ position: [0, 0.6, 2.4], fov: 40 }} gl={{ antialias: true }} dpr={[1, 2]}>
         <ambientLight intensity={0.25} />
-        <directionalLight position={[4, 2, 3]} intensity={2.2} color="#fff2e0" />
+        {/* warm key sun + faint cool space fill for a crisp terminator */}
+        <directionalLight position={[4, 2, 3]} intensity={2.6} color="#fff2e0" />
+        <directionalLight position={[-4, -1, -2]} intensity={0.12} color="#8ab4d8" />
+        <Stars radius={40} depth={20} count={1300} factor={2.2} saturation={0} fade speed={0.4} />
         <Globe />
         <OrbitControls enablePan={false} enableZoom={false} />
       </Canvas>

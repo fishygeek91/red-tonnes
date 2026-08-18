@@ -67,7 +67,7 @@ export function TopBar(): React.ReactElement {
   return (
     <header className="flex items-center h-14 px-3 panel border-b border-[var(--line)] gap-1 select-none">
       <div className="flex flex-col pr-3">
-        <span className="text-[var(--rust-hot)] font-bold tracking-[0.3em] text-sm">RED TONNES</span>
+        <span className="text-[var(--rust-hot)] font-bold tracking-[0.3em] text-sm brand-glow">RED TONNES</span>
         <span className="text-[10px] text-[var(--dim)]">the sky stays thin</span>
       </div>
       <div className="flex items-center overflow-x-auto flex-1">

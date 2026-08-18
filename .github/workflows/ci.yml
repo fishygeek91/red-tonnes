@@ -1,5 +1,7 @@
 # Continuous integration: lint, production build, and the headless engine
 # smoke test (determinism + mass conservation) on every push and PR to main.
+# Pushes to main that pass verification also deploy the static export to
+# GitHub Pages.
 name: CI
 
 on:
@@ -32,3 +34,42 @@ jobs:
 
       - name: Engine smoke test (determinism + mass conservation)
         run: npx tsx scripts/smoke.ts
+
+  # Build the static export (basePath /red-tonnes) and publish it to GitHub
+  # Pages. Only runs on pushes to main, and only after verification passes.
+  deploy-pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static export
+        run: npm run build
+        env:
+          GITHUB_PAGES: "true"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

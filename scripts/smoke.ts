@@ -5,6 +5,7 @@
  */
 
 import { decodeRunLog, encodeRunLog } from '../src/lib/share/encode';
+import { ghostFromReplay, ghostFuelLeadSols, ghostSnapshotAt, raceVerdict } from '../src/lib/share/ghost';
 import { appendRunAction, emptyRunLog, replayRun } from '../src/lib/share/recording';
 import { scorecard } from '../src/lib/share/scorecard';
 import { missionBrief } from '../src/lib/sim/brief';
@@ -158,6 +159,52 @@ async function shareChecks(): Promise<void> {
   }
 
   console.log('\n' + scorecard(replayed, { daily: '2026-08-18' }));
+
+  // ---- ghost racing checks --------------------------------------------------
+  // The ghost is derived from a replayed shared run; it must snapshot the
+  // run faithfully and stay frozen while the racer's sim keeps stepping.
+  const ghost = ghostFromReplay(shared, replayed);
+  const historyLenBefore = ghost.history.length;
+  const steppedPast = step(replayed, 25, {});
+  const frozen =
+    ghost.history.length === historyLenBefore && steppedPast.history.length > historyLenBefore;
+
+  // Snapshot lookup: every queried sol must return the latest snapshot at or
+  // before it, and sols past finalSol must clamp to the last snapshot.
+  const probes = [1, 137, 400, shared.finalSol, shared.finalSol + 500];
+  const lookupOk = probes.every((sol) => {
+    const snap = ghostSnapshotAt(ghost, sol);
+    return snap !== null && snap.sol <= sol && snap.sol <= shared.finalSol;
+  });
+
+  // Pace helper: the ghost reached its own final fuel level no later than
+  // finalSol, so the lead measured there can never be positive.
+  const finalFuel = ghost.history[ghost.history.length - 1].methaloxKg;
+  const lead = ghostFuelLeadSols(ghost, shared.finalSol, finalFuel);
+  const paceOk = lead !== null && lead <= 0;
+
+  // Racing a run against its own ghost must never declare a winner by sols.
+  const selfVerdict = raceVerdict(ghost, replayed);
+  const verdictOk = selfVerdict === null || selfVerdict === '🏁 Dead heat with the ghost';
+
+  // Decided-verdict branch: the seed-7 demo run banks return fuel (sol 1124),
+  // so racing it against its own ghost must land exactly on a dead heat.
+  const fueledGhost = ghostFromReplay(
+    { ...emptyRunLog(7, 'arcadia', 'balanced'), finalSol: a.sol },
+    a,
+  );
+  const fueledVerdict = raceVerdict(fueledGhost, a);
+  const fueledOk = fueledVerdict === '🏁 Dead heat with the ghost';
+
+  console.log('\n--- ghost checks ---');
+  console.log('ghost frozen while sim steps:', frozen);
+  console.log('snapshot lookup clamps correctly:', lookupOk);
+  console.log('pace helper self-consistent:', paceOk);
+  console.log('self-race verdict sane:', verdictOk, selfVerdict === null ? '(undecided)' : `(${selfVerdict})`);
+  console.log('fueled self-race is a dead heat:', fueledOk, `(${fueledVerdict ?? 'null'})`);
+  if (!frozen || !lookupOk || !paceOk || !verdictOk || !fueledOk) {
+    throw new Error('ghost racing checks failed');
+  }
 }
 
 void shareChecks();

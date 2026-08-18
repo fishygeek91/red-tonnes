@@ -8,6 +8,8 @@ import { missedWindowTest, topBarStats } from '../sim/derive';
 import type { SimState } from '../sim/state';
 import { getSite } from '../sites';
 import { dayNumberOf } from './daily';
+import type { GhostRun } from './ghost';
+import { raceVerdict } from './ghost';
 
 /** Options for scorecard rendering. */
 export interface ScorecardOptions {
@@ -15,6 +17,8 @@ export interface ScorecardOptions {
   readonly daily?: string;
   /** Permalink to append as the last line, if available. */
   readonly url?: string;
+  /** Ghost being raced, for the race-verdict line. */
+  readonly ghost?: GhostRun;
 }
 
 /** Outcome emoji per end state ('' = still running). */
@@ -56,6 +60,13 @@ export function scorecard(s: SimState, opts: ScorecardOptions = {}): string {
     `Fuel ${'🚀'.repeat(shipsWhole)}${'⬛'.repeat(quota - shipsWhole)} ${t.shipsFuelable.toFixed(1)}/${quota} ships`,
     `2-window test ${mw.passes ? '✅' : '❌'}`,
   ];
+  // Race verdict against the ghost, when one is loaded and decided.
+  if (opts.ghost) {
+    const verdict = raceVerdict(opts.ghost, s);
+    if (verdict !== null) {
+      lines.push(verdict);
+    }
+  }
   if (opts.url) {
     lines.push(opts.url);
   }

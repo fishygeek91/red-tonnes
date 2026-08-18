@@ -9,6 +9,8 @@
 import { create } from 'zustand';
 import { SOLS_PER_SYNODIC_WINDOW } from '../lib/constants';
 import { dailyChallenge } from '../lib/share/daily';
+import type { GhostRun } from '../lib/share/ghost';
+import { ghostFromReplay } from '../lib/share/ghost';
 import type { RunLog } from '../lib/share/recording';
 import { appendRunAction, emptyRunLog, replayRun } from '../lib/share/recording';
 import type { InspectId } from '../lib/sim/inspect';
@@ -46,6 +48,8 @@ interface SimStore {
   inspectId: InspectId | null;
   /** Trends drawer (history charts) visibility. */
   showTrends: boolean;
+  /** Frozen snapshot of a shared run being raced; null = no ghost. */
+  ghost: GhostRun | null;
 
   /** Start a new game from the setup screen. */
   newGame: (seed: number, siteId: string, templateId: string) => void;
@@ -53,6 +57,10 @@ interface SimStore {
   startDaily: () => void;
   /** Load a shared run from a decoded permalink: replay it, pause at its end. */
   loadSharedRun: (log: RunLog) => void;
+  /** Restart the shared run's seed from sol 0 and race its ghost. */
+  startRace: () => void;
+  /** Drop the ghost (end the race overlay). */
+  clearGhost: () => void;
   /** Dismiss the shared-run notice. */
   setSharedNotice: (v: boolean) => void;
   /** Toggle play/pause. */
@@ -99,6 +107,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   sharedNotice: false,
   inspectId: null,
   showTrends: false,
+  ghost: null,
 
   newGame: (seed, siteId, templateId) => {
     set({
@@ -110,6 +119,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       runLog: emptyRunLog(seed, siteId, templateId),
       sharedNotice: false,
       inspectId: null,
+      ghost: null,
     });
   },
 
@@ -128,14 +138,17 @@ export const useSimStore = create<SimStore>((set, get) => ({
       runLog: emptyRunLog(daily.seed, daily.siteId, daily.templateId, daily.dateKey),
       sharedNotice: false,
       inspectId: null,
+      ghost: null,
     });
   },
 
   loadSharedRun: (log) => {
     // Replay reconstructs the exact state (and scrubbable history) of the
     // shared run; pause at its end so the visitor can inspect, then take over.
+    // The replayed run is also frozen as a ghost so the visitor can race it.
+    const replayed = replayRun(log);
     set({
-      sim: replayRun(log),
+      sim: replayed,
       playing: false,
       scrubSol: null,
       showSetup: false,
@@ -143,8 +156,32 @@ export const useSimStore = create<SimStore>((set, get) => ({
       runLog: log,
       sharedNotice: true,
       inspectId: null,
+      ghost: ghostFromReplay(log, replayed),
     });
   },
+
+  startRace: () => {
+    const st = get();
+    if (st.ghost === null) {
+      return;
+    }
+    // Same seed, site and template as the shared run => same storms and the
+    // same windows. The racer starts from sol 0 with a fresh action log
+    // (daily tag preserved so a daily race still scores as a daily).
+    const log = st.runLog;
+    set({
+      sim: createInitialState({ seed: log.seed, siteId: log.siteId, templateId: log.templateId }),
+      playing: true,
+      scrubSol: null,
+      showSetup: false,
+      accumulator: 0,
+      runLog: emptyRunLog(log.seed, log.siteId, log.templateId, log.daily),
+      sharedNotice: false,
+      inspectId: null,
+    });
+  },
+
+  clearGhost: () => set({ ghost: null }),
 
   setSharedNotice: (v) => set({ sharedNotice: v }),
 

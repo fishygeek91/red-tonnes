@@ -72,6 +72,13 @@ step(state, dtSols, actions) => nextState   // src/lib/sim/step.ts
   and failure hazard, computed with the engine's own formulas. **Trends**
   opens six scrubbable history charts, and dragging the timeline replays the
   whole city: dust, tank fills, and Starship traffic included.
+- **Ghost racing.** Open someone's share link and hit **Race the ghost**:
+  the same seed restarts from sol 0 with their run frozen as a ghost — same
+  storms, same windows, your decisions. The HUD tracks fuel, loop closure,
+  and how many sols ahead or behind you are; their milestones pop as toasts
+  when your clock crosses them, and their runs draw as dashed lines on the
+  Methalox and Loop charts. The final scorecard prints the race verdict.
+  No backend: the ghost is derived entirely from the permalink's replay.
 
 ## Where the constants live
 
@@ -107,5 +114,7 @@ departure window get missed.
 npx tsx scripts/smoke.ts
 ```
 
-Runs two windows, checks determinism and that no pool goes non-finite, and
-prints the mission brief.
+Runs two windows, checks determinism and that no pool goes non-finite,
+verifies the share codec and ghost-racing helpers, and prints the mission
+brief. `npx tsx scripts/verify-ghost.ts` drives a real browser through a
+shared link and a ghost race (needs `npm run dev` or `next start` running).

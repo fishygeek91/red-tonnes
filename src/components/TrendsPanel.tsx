@@ -9,6 +9,7 @@
 
 import { useMemo } from 'react';
 import { SOLS_PER_SYNODIC_WINDOW } from '../lib/constants';
+import { ghostSnapshotAt } from '../lib/share/ghost';
 import type { SolSnapshot } from '../lib/sim/state';
 import { useSimStore } from '../store/useSimStore';
 
@@ -25,23 +26,34 @@ interface Series {
   readonly label: string;
   /** Stroke color (CSS value). */
   readonly color: string;
-  /** One value per sampled snapshot. */
+  /** One value per sampled snapshot; NaN gaps break the line. */
   readonly values: readonly number[];
+  /** Dashed rendering (used for ghost overlays). */
+  readonly dash?: boolean;
 }
 
-/** Build an SVG path across the plot area for one series. */
+/**
+ * Build an SVG path across the plot area for one series. Non-finite values
+ * lift the pen (ghost series end at the ghost's final sol).
+ */
 function linePath(values: readonly number[], min: number, max: number): string {
   if (values.length < 2) {
     return '';
   }
   const span = Math.max(1e-9, max - min);
   const dx = W / (values.length - 1);
-  return values
-    .map((v, i) => {
-      const y = H - ((Math.min(Math.max(v, min), max) - min) / span) * H;
-      return `${i === 0 ? 'M' : 'L'}${(i * dx).toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
+  const parts: string[] = [];
+  let drawing = false;
+  values.forEach((v, i) => {
+    if (!Number.isFinite(v)) {
+      drawing = false;
+      return;
+    }
+    const y = H - ((Math.min(Math.max(v, min), max) - min) / span) * H;
+    parts.push(`${drawing ? 'L' : 'M'}${(i * dx).toFixed(1)},${y.toFixed(1)}`);
+    drawing = true;
+  });
+  return parts.join(' ');
 }
 
 /** Compact number formatting for chart legends and axis hints. */
@@ -73,6 +85,9 @@ function Chart(props: {
   let max = -Infinity;
   for (const s of series) {
     for (const v of s.values) {
+      if (!Number.isFinite(v)) {
+        continue;
+      }
       min = Math.min(min, v);
       max = Math.max(max, v);
     }
@@ -123,7 +138,7 @@ function Chart(props: {
         <span className="num text-[9px] text-[var(--dim)]">
           {series.map((s, k) => (
             <span key={s.label} className={k > 0 ? 'ml-2' : ''} style={{ color: s.color }}>
-              {s.label} {n > 0 ? fmt(s.values[idx]) : '–'}
+              {s.label} {n > 0 && Number.isFinite(s.values[idx]) ? fmt(s.values[idx]) : '–'}
             </span>
           ))}
           <span className="ml-1 text-[var(--dim)]">{props.unit}</span>
@@ -149,7 +164,16 @@ function Chart(props: {
           <line x1={0} y1={refY} x2={W} y2={refY} stroke="var(--dim)" strokeWidth={0.6} strokeDasharray="3 3" />
         ) : null}
         {series.map((s) => (
-          <path key={s.label} d={linePath(s.values, min, max)} fill="none" stroke={s.color} strokeWidth={1.1} vectorEffect="non-scaling-stroke" />
+          <path
+            key={s.label}
+            d={linePath(s.values, min, max)}
+            fill="none"
+            stroke={s.color}
+            strokeWidth={1.1}
+            strokeDasharray={s.dash === true ? '4 3' : undefined}
+            opacity={s.dash === true ? 0.75 : 1}
+            vectorEffect="non-scaling-stroke"
+          />
         ))}
         {/* viewed-sol cursor */}
         <line x1={cursorX} y1={0} x2={cursorX} y2={H} stroke="var(--rust-hot)" strokeWidth={0.8} opacity={0.85} />
@@ -183,11 +207,32 @@ function sample(history: readonly SolSnapshot[]): readonly SolSnapshot[] {
 /** The drawer itself: six charts over the whole run. */
 export function TrendsPanel(): React.ReactElement | null {
   const sim = useSimStore((s) => s.sim);
+  const ghost = useSimStore((s) => s.ghost);
   const showTrends = useSimStore((s) => s.showTrends);
   const scrubSol = useSimStore((s) => s.scrubSol);
   const setScrubSol = useSimStore((s) => s.setScrubSol);
 
   const h = useMemo(() => sample(sim.history), [sim.history]);
+
+  // Ghost overlay values aligned to the player's sampled sols; NaN past the
+  // ghost's final sol (or where the ghost has no data) breaks the line.
+  const ghostSeries = useMemo(() => {
+    if (ghost === null) {
+      return null;
+    }
+    const at = (pick: (snap: SolSnapshot) => number): number[] =>
+      h.map((x) => {
+        if (x.sol > ghost.finalSol) {
+          return Number.NaN;
+        }
+        const snap = ghostSnapshotAt(ghost, x.sol);
+        return snap ? pick(snap) : Number.NaN;
+      });
+    return {
+      methaloxT: at((snap) => snap.methaloxKg / 1000),
+      selfSufficiency: at((snap) => snap.selfSufficiency * 100),
+    };
+  }, [ghost, h]);
 
   if (!showTrends) {
     return null;
@@ -229,7 +274,12 @@ export function TrendsPanel(): React.ReactElement | null {
           onScrub={onScrub}
           refValue={quotaT}
           refLabel={`departure quota ${quotaT.toFixed(0)} t`}
-          series={[{ label: 'banked', color: 'var(--ice)', values: h.map((x) => x.methaloxKg / 1000) }]}
+          series={[
+            { label: 'banked', color: 'var(--ice)', values: h.map((x) => x.methaloxKg / 1000) },
+            ...(ghostSeries !== null
+              ? [{ label: 'ghost', color: 'var(--dim)', values: ghostSeries.methaloxT, dash: true }]
+              : []),
+          ]}
         />
         <Chart
           title="Calories"
@@ -261,6 +311,9 @@ export function TrendsPanel(): React.ReactElement | null {
           series={[
             { label: 'self-suff', color: 'var(--green)', values: h.map((x) => x.selfSufficiency * 100) },
             { label: 'Earth food', color: 'var(--warn)', values: h.map((x) => x.earthFoodFraction * 100) },
+            ...(ghostSeries !== null
+              ? [{ label: 'ghost', color: 'var(--dim)', values: ghostSeries.selfSufficiency, dash: true }]
+              : []),
           ]}
         />
         <Chart

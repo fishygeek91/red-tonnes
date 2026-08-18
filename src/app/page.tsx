@@ -9,6 +9,7 @@
 import dynamic from 'next/dynamic';
 import { BuildPanel } from '../components/BuildPanel';
 import { EndBanner } from '../components/EndBanner';
+import { GhostHud } from '../components/GhostHud';
 import { Ledgers } from '../components/Ledgers';
 import { PlanetOverlay } from '../components/PlanetOverlay';
 import { SetupModal } from '../components/SetupModal';
@@ -45,6 +46,7 @@ export default function Page(): React.ReactElement {
         <Ledgers />
         <EndBanner />
         <SharedRunNotice />
+        <GhostHud />
       </main>
       <TrendsPanel />
       <TimeScrubber />

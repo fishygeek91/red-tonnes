@@ -8,22 +8,34 @@
 
 import { useMemo } from 'react';
 import { SOLS_PER_SYNODIC_WINDOW } from '../lib/constants';
+import { ghostSnapshotAt } from '../lib/share/ghost';
 import { SPEEDS, useSimStore } from '../store/useSimStore';
 
-/** Build an SVG polyline path from history values. */
+/** Build an SVG polyline path from history values; NaN gaps lift the pen. */
 function sparkPath(values: number[], w: number, h: number, max: number): string {
   if (values.length < 2 || max <= 0) {
     return '';
   }
   const step = w / (values.length - 1);
-  return values
-    .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${(h - (Math.min(v, max) / max) * h).toFixed(1)}`)
-    .join(' ');
+  const parts: string[] = [];
+  let drawing = false;
+  values.forEach((v, i) => {
+    if (!Number.isFinite(v)) {
+      drawing = false;
+      return;
+    }
+    parts.push(
+      `${drawing ? 'L' : 'M'}${(i * step).toFixed(1)},${(h - (Math.min(v, max) / max) * h).toFixed(1)}`,
+    );
+    drawing = true;
+  });
+  return parts.join(' ');
 }
 
 /** The scrubber bar. */
 export function TimeScrubber(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
+  const ghost = useSimStore((s) => s.ghost);
   const playing = useSimStore((s) => s.playing);
   const speed = useSimStore((s) => s.speed);
   const scrubSol = useSimStore((s) => s.scrubSol);
@@ -35,16 +47,29 @@ export function TimeScrubber(): React.ReactElement {
   const setShowTrends = useSimStore((s) => s.setShowTrends);
 
   const h = sim.history;
-  const { tauPath, fuelPath, maxFuel } = useMemo(() => {
+  const { tauPath, fuelPath, ghostFuelPath, maxFuel } = useMemo(() => {
     const taus = h.map((x) => x.tau);
     const fuels = h.map((x) => x.methaloxKg / 1000);
-    const mf = Math.max(1, ...fuels);
+    // Ghost fuel sampled at the player's sols so the x-axes line up; NaN
+    // past the ghost's final sol ends the trace.
+    const ghostFuels =
+      ghost === null
+        ? []
+        : h.map((x) => {
+            if (x.sol > ghost.finalSol) {
+              return Number.NaN;
+            }
+            const snap = ghostSnapshotAt(ghost, x.sol);
+            return snap ? snap.methaloxKg / 1000 : Number.NaN;
+          });
+    const mf = Math.max(1, ...fuels, ...ghostFuels.filter((v) => Number.isFinite(v)));
     return {
       tauPath: sparkPath(taus, 600, 26, 6),
       fuelPath: sparkPath(fuels, 600, 26, mf),
+      ghostFuelPath: sparkPath(ghostFuels, 600, 26, mf),
       maxFuel: mf,
     };
-  }, [h]);
+  }, [h, ghost]);
 
   const viewSol = scrubSol ?? sim.sol;
   const viewSnap = scrubSol !== null ? h.find((x) => x.sol === scrubSol) : undefined;
@@ -101,6 +126,9 @@ export function TimeScrubber(): React.ReactElement {
           })}
           <path d={tauPath} fill="none" stroke="var(--warn)" strokeWidth={1.2} />
           <path d={fuelPath} fill="none" stroke="var(--ice)" strokeWidth={1.2} />
+          {ghostFuelPath !== '' ? (
+            <path d={ghostFuelPath} fill="none" stroke="var(--ice)" strokeWidth={1} strokeDasharray="3 3" opacity={0.5} />
+          ) : null}
         </svg>
         <input
           type="range"

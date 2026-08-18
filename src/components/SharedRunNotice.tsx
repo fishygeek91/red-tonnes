@@ -15,6 +15,7 @@ export function SharedRunNotice(): React.ReactElement | null {
   const sharedNotice = useSimStore((s) => s.sharedNotice);
   const setSharedNotice = useSimStore((s) => s.setSharedNotice);
   const loadSharedRun = useSimStore((s) => s.loadSharedRun);
+  const startRace = useSimStore((s) => s.startRace);
   const playing = useSimStore((s) => s.playing);
   const endState = useSimStore((s) => s.sim.endState);
 
@@ -55,15 +56,23 @@ export function SharedRunNotice(): React.ReactElement | null {
             <>
               You are watching a shared run that ended in{' '}
               <span className="text-[var(--fail)]">{endState}</span> — scrub the timeline to see
-              where it went wrong, then start a New Game to do better.
+              where it went wrong, then race the same seed and survive it.
             </>
           ) : (
             <>
-              You are watching a shared run — scrub the timeline, then press{' '}
-              <span className="text-[var(--rust-hot)]">Space</span> to take over and beat it.
+              You are watching a shared run — scrub the timeline, press{' '}
+              <span className="text-[var(--rust-hot)]">Space</span> to take over, or race their
+              ghost from sol 0. Same seed, same storms.
             </>
           )}
         </span>
+        <button
+          onClick={() => startRace()}
+          className="text-[10px] px-2 py-1 border border-[var(--rust)] text-[var(--rust-hot)] hover:bg-[var(--rust)] hover:text-black uppercase tracking-widest"
+          title="Restart this seed from sol 0 with the shared run as a live ghost"
+        >
+          Race the ghost
+        </button>
         <button
           onClick={() => setSharedNotice(false)}
           className="text-[10px] px-2 py-1 border border-[var(--line)] hover:border-[var(--rust)] text-[var(--dim)] hover:text-[var(--text)] uppercase tracking-widest"

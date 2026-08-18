@@ -24,6 +24,7 @@ const DETAIL: Record<string, string> = {
 export function EndBanner(): React.ReactElement | null {
   const sim = useSimStore((s) => s.sim);
   const runLog = useSimStore((s) => s.runLog);
+  const ghost = useSimStore((s) => s.ghost);
   const setShowSetup = useSimStore((s) => s.setShowSetup);
   const [copied, setCopied] = useState<'card' | 'link' | null>(null);
 
@@ -41,7 +42,9 @@ export function EndBanner(): React.ReactElement | null {
 
   const copyScorecard = async (): Promise<void> => {
     const url = await buildRunPermalink(runLog, sim.sol);
-    const ok = await copyText(scorecard(sim, { daily: runLog.daily, url }));
+    const ok = await copyText(
+      scorecard(sim, { daily: runLog.daily, url, ghost: ghost ?? undefined }),
+    );
     if (ok) {
       flash('card');
     }
@@ -67,7 +70,7 @@ export function EndBanner(): React.ReactElement | null {
         </div>
         <div className="text-[11px] text-[var(--dim)] mt-2">{DETAIL[endState] ?? ''}</div>
         <pre className="text-[11px] text-left leading-relaxed mt-3 px-3 py-2 bg-[var(--panel-2)] border border-[var(--line)] whitespace-pre-wrap">
-          {scorecard(sim, { daily: runLog.daily })}
+          {scorecard(sim, { daily: runLog.daily, ghost: ghost ?? undefined })}
         </pre>
         <div className="flex gap-2 justify-center mt-3">
           <button

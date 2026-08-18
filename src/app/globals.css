@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* RED TONNES — Iain Banks industrial meets NASA slide.
+   Stainless, rust, ice; greenhouse green is a scarce pigment. */
+
+:root {
+  --bg: #0b0908;
+  --panel: #14100e;
+  --panel-2: #1b1512;
+  --line: #2c221c;
+  --text: #d6cfc7;
+  --dim: #8a7f74;
+  --rust: #b4530a;
+  --rust-hot: #e2661a;
+  --ice: #7cc7e8;
+  --green: #59c96a;
+  --warn: #e8b44a;
+  --fail: #e05252;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.num {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.panel-title {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.stat-hover {
+  cursor: help;
+  border-bottom: 1px dotted var(--dim);
+}
+
+/* thin industrial scrollbars */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input[type='range'] {
+  accent-color: var(--rust-hot);
+}
+
+button {
+  cursor: pointer;
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+/* Sankey ribbons: dashed conveyor motion, source -> destination. */
+@keyframes sankey-flow {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+.sankey-ribbon {
+  opacity: 0.45;
+  stroke-dasharray: 14 8;
+  animation: sankey-flow 1.4s linear infinite;
+  transition: opacity 0.15s ease;
+}
+.sankey-ribbon:hover {
+  opacity: 0.9;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sankey-ribbon {
+    animation: none;
+    stroke-dasharray: none;
+    opacity: 0.55;
+  }
+}

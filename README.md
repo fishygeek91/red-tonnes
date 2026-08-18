@@ -17,6 +17,15 @@ close its waste loops, and fuel its own Starships, while the sky stays thin.
   2018): accessible CO2 tops out near 20 mbar. The city para-terraforms;
   Mars stays red.
 
+A clear sol — greenhouses glowing, ISRU humming:
+
+![Clear day at Arcadia Planitia, sol 337](docs/screenshot-clear.png)
+
+Then the global dust storm hits (τ 4.3): solar collapses, the city dims to
+its nuclear floor, and ISRU turns down while life support holds:
+
+![Global dust storm, sol 480, optical depth 4.3](docs/screenshot.png)
+
 ## Install & run
 
 ```bash

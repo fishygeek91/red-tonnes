@@ -19,10 +19,14 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { getSite, opticalDepthAtSol } from '../../lib/sites';
 import { rngFromSeed, rngNext, type RngState } from '../../lib/rng';
+import { LOX_TO_CH4_RATIO } from '../../lib/constants';
+import { inspect } from '../../lib/sim/inspect';
+import type { SimState, SolSnapshot } from '../../lib/sim/state';
 import { STRUCTURES } from '../../lib/structures';
 import { clamp, safeDiv } from '../../lib/types';
 import { sunlightFraction } from '../../lib/sim/step';
 import { useSimStore } from '../../store/useSimStore';
+import { Pick } from './Pick';
 import { Starships } from './Starships';
 
 /** One fixed sun direction for the whole scene (light, shadows, sky disc). */
@@ -93,6 +97,73 @@ function fbm(x: number, y: number): number {
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+/**
+ * The snapshot the scene should render: the scrubbed sol's when the player
+ * is viewing history, else the latest. history[i].sol === i + 1 by
+ * construction (the first snapshot is pushed after the sol-0 → sol-1 step).
+ */
+function viewSnapshot(sim: SimState, scrubSol: number | null): SolSnapshot | undefined {
+  if (sim.history.length === 0) {
+    return undefined;
+  }
+  if (scrubSol === null) {
+    return sim.history[sim.history.length - 1];
+  }
+  const idx = clamp(scrubSol - 1, 0, sim.history.length - 1);
+  return sim.history[idx];
+}
+
+/** The HTML inspection card overlaid on the scene when a structure is selected. */
+function InspectCard(): React.ReactElement | null {
+  const sim = useSimStore((s) => s.sim);
+  const inspectId = useSimStore((s) => s.inspectId);
+  const setInspect = useSimStore((s) => s.setInspect);
+  if (inspectId === null) {
+    return null;
+  }
+  const card = inspect(sim, inspectId);
+  return (
+    <div className="absolute top-2 left-2 w-[280px] panel border border-[var(--rust)] p-3 z-20 shadow-lg">
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <div>
+          <div className="text-[11px] text-[var(--rust-hot)] font-bold tracking-widest uppercase">
+            {card.title}
+          </div>
+          {card.count !== null ? (
+            <div className="num text-[10px] text-[var(--dim)]">×{card.count} built</div>
+          ) : null}
+        </div>
+        <button
+          onClick={() => setInspect(null)}
+          className="text-[var(--dim)] hover:text-[var(--text)] text-sm leading-none px-1"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+      <p className="text-[10px] text-[var(--dim)] leading-snug mb-2">{card.blurb}</p>
+      <div className="space-y-0.5">
+        {card.lines.map((line) => (
+          <div key={line.label} className="flex justify-between gap-2 text-[10px]">
+            <span className="text-[var(--dim)] shrink-0">{line.label}</span>
+            <span
+              className={`num text-right ${
+                line.tone === 'warn'
+                  ? 'text-[var(--warn)]'
+                  : line.tone === 'good'
+                    ? 'text-[var(--green)]'
+                    : 'text-[var(--text)]'
+              }`}
+            >
+              {line.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -497,15 +568,22 @@ function GreenhouseStreet(props: {
 /** All the buildings, derived from structure counts + live inventories. */
 function City(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
+  const scrubSol = useSimStore((s) => s.scrubSol);
   const st = sim.structures;
-  const last = sim.history[sim.history.length - 1];
-  const tau = last ? last.tau : 0.4;
+  const snap = viewSnapshot(sim, scrubSol);
+  const tau = snap ? snap.tau : 0.4;
   const sun = sunlightFraction(tau);
   const ghGlow = clamp(sun / 0.5, 0.05, 1);
   const cryoCap = Math.max(1, st.cryoPlant * STRUCTURES.cryoPlant.capacityValue);
-  const ch4Fill = clamp(safeDiv(sim.inv.ch4Kg, cryoCap * 0.22), 0.02, 1);
-  const loxFill = clamp(safeDiv(sim.inv.loxKg, cryoCap * 0.78), 0.02, 1);
-  const waterFill = clamp(safeDiv(sim.inv.waterKg, 100000), 0.05, 1);
+  // Live view uses the exact inventories; history view reconstructs the tanks
+  // from the snapshot (methalox split at the stored 3.6:1 mixture ratio).
+  const scrubbing = scrubSol !== null && snap !== undefined;
+  const ch4Kg = scrubbing ? snap.methaloxKg / (1 + LOX_TO_CH4_RATIO) : sim.inv.ch4Kg;
+  const loxKg = scrubbing ? snap.methaloxKg - ch4Kg : sim.inv.loxKg;
+  const waterKg = scrubbing ? snap.waterKg : sim.inv.waterKg;
+  const ch4Fill = clamp(safeDiv(ch4Kg, cryoCap * 0.22), 0.02, 1);
+  const loxFill = clamp(safeDiv(loxKg, cryoCap * 0.78), 0.02, 1);
+  const waterFill = clamp(safeDiv(waterKg, 100000), 0.05, 1);
 
   const flare = useRef<THREE.PointLight>(null);
   useFrame((state) => {
@@ -517,68 +595,78 @@ function City(): React.ReactElement {
 
   return (
     <group>
-      {/* ice-table cutaway trench near the mine */}
-      <mesh position={[-26, -1.2, 14]} material={MAT.iceTank}>
-        <boxGeometry args={[14, 1.2, 8]} />
-      </mesh>
-      <mesh position={[-26, -0.4, 14]} material={MAT.berm} receiveShadow>
-        <boxGeometry args={[14.5, 0.5, 8.5]} />
-      </mesh>
+      {/* ice-table cutaway trench near the mine (clicks open the mine card) */}
+      <Pick id="iceMine">
+        <mesh position={[-26, -1.2, 14]} material={MAT.iceTank}>
+          <boxGeometry args={[14, 1.2, 8]} />
+        </mesh>
+        <mesh position={[-26, -0.4, 14]} material={MAT.berm} receiveShadow>
+          <boxGeometry args={[14.5, 0.5, 8.5]} />
+        </mesh>
+      </Pick>
 
       {/* landing pads with beacon rings (aligned with the Starship slots) */}
-      <Row count={Math.max(0, st.pad)} spacing={9} origin={[13, 0.02, -18]}>
-        {(i, pos) => (
-          <group key={`pad-${i}`} position={pos}>
-            <mesh material={MAT.pad} receiveShadow>
-              <cylinderGeometry args={[3.6, 3.6, 0.12, 32]} />
-            </mesh>
-            <mesh position={[0, 0.07, 0]} material={MAT.padRing}>
-              <torusGeometry args={[3.3, 0.045, 8, 48]} />
-            </mesh>
-          </group>
-        )}
-      </Row>
+      <Pick id="pad">
+        <Row count={Math.max(0, st.pad)} spacing={9} origin={[13, 0.02, -18]}>
+          {(i, pos) => (
+            <group key={`pad-${i}`} position={pos}>
+              <mesh material={MAT.pad} receiveShadow>
+                <cylinderGeometry args={[3.6, 3.6, 0.12, 32]} />
+              </mesh>
+              <mesh position={[0, 0.07, 0]} material={MAT.padRing}>
+                <torusGeometry args={[3.3, 0.045, 8, 48]} />
+              </mesh>
+            </group>
+          )}
+        </Row>
+      </Pick>
 
       {/* solar field */}
-      <Row count={st.solar * 3} spacing={2.6} origin={[10, 0.5, 12]}>
-        {(i, pos) => (
-          <group key={`sol-${i}`} position={pos}>
-            <mesh rotation={[-0.5, 0, 0]} material={MAT.panel} castShadow receiveShadow>
-              <boxGeometry args={[2.2, 0.06, 1.4]} />
-            </mesh>
-            <mesh position={[0, -0.28, 0]} material={MAT.steel} castShadow>
-              <cylinderGeometry args={[0.05, 0.05, 0.55, 6]} />
-            </mesh>
-          </group>
-        )}
-      </Row>
+      <Pick id="solar">
+        <Row count={st.solar * 3} spacing={2.6} origin={[10, 0.5, 12]}>
+          {(i, pos) => (
+            <group key={`sol-${i}`} position={pos}>
+              <mesh rotation={[-0.5, 0, 0]} material={MAT.panel} castShadow receiveShadow>
+                <boxGeometry args={[2.2, 0.06, 1.4]} />
+              </mesh>
+              <mesh position={[0, -0.28, 0]} material={MAT.steel} castShadow>
+                <cylinderGeometry args={[0.05, 0.05, 0.55, 6]} />
+              </mesh>
+            </group>
+          )}
+        </Row>
+      </Pick>
 
       {/* nuclear: finned cylinders behind a berm */}
-      <Row count={st.nuclear} spacing={4} origin={[24, 0.9, 8]}>
-        {(i, pos) => (
-          <group key={`nuc-${i}`} position={pos}>
-            <mesh material={MAT.steel} castShadow receiveShadow>
-              <cylinderGeometry args={[0.7, 0.9, 1.8, 12]} />
-            </mesh>
-            <mesh position={[0, 1.3, 0]} material={MAT.rustSteel} castShadow>
-              <cylinderGeometry args={[1.3, 0.5, 0.8, 4]} />
-            </mesh>
-          </group>
-        )}
-      </Row>
+      <Pick id="nuclear">
+        <Row count={st.nuclear} spacing={4} origin={[24, 0.9, 8]}>
+          {(i, pos) => (
+            <group key={`nuc-${i}`} position={pos}>
+              <mesh material={MAT.steel} castShadow receiveShadow>
+                <cylinderGeometry args={[0.7, 0.9, 1.8, 12]} />
+              </mesh>
+              <mesh position={[0, 1.3, 0]} material={MAT.rustSteel} castShadow>
+                <cylinderGeometry args={[1.3, 0.5, 0.8, 4]} />
+              </mesh>
+            </group>
+          )}
+        </Row>
+      </Pick>
 
       {/* ISRU plant: compressor/electrolyzer/sabatier as a piped block */}
       <group position={[-14, 0, 2]}>
         {(['compressor', 'electrolyzer', 'sabatier'] as const).map((id, k) =>
           st[id] > 0 ? (
-            <group key={id} position={[k * 4.2, 0, 0]}>
-              <mesh position={[0, 1, 0]} material={MAT.steel} castShadow receiveShadow>
-                <boxGeometry args={[3, 2, 2.4]} />
-              </mesh>
-              <mesh position={[0, 2.6, 0.5]} material={MAT.rustSteel} castShadow>
-                <cylinderGeometry args={[0.25, 0.25, 1.4, 8]} />
-              </mesh>
-            </group>
+            <Pick key={id} id={id}>
+              <group position={[k * 4.2, 0, 0]}>
+                <mesh position={[0, 1, 0]} material={MAT.steel} castShadow receiveShadow>
+                  <boxGeometry args={[3, 2, 2.4]} />
+                </mesh>
+                <mesh position={[0, 2.6, 0.5]} material={MAT.rustSteel} castShadow>
+                  <cylinderGeometry args={[0.25, 0.25, 1.4, 8]} />
+                </mesh>
+              </group>
+            </Pick>
           ) : null,
         )}
         {st.sabatier > 0 ? <pointLight ref={flare} position={[6, 3.5, 0]} color="#e2661a" distance={16} /> : null}
@@ -586,107 +674,125 @@ function City(): React.ReactElement {
 
       {/* cryo tank farm with live fill */}
       {st.cryoPlant > 0 ? (
-        <group position={[-2, 0, -14]}>
-          <mesh position={[0, 1.6, 0]} material={MAT.ch4Tank} castShadow receiveShadow>
-            <cylinderGeometry args={[1.4, 1.4, 3.2, 20]} />
-          </mesh>
-          <mesh position={[0, 0.15 + ch4Fill * 1.5, 0]} scale={[1.01, ch4Fill, 1.01]}>
-            <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
-            <meshStandardMaterial color="#7cc7e8" transparent opacity={0.5} />
-          </mesh>
-          <mesh position={[3.6, 1.6, 0]} material={MAT.ch4Tank} castShadow receiveShadow>
-            <cylinderGeometry args={[1.4, 1.4, 3.2, 20]} />
-          </mesh>
-          <mesh position={[3.6, 0.15 + loxFill * 1.5, 0]} scale={[1.01, loxFill, 1.01]}>
-            <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
-            <meshStandardMaterial color="#a9d9f0" transparent opacity={0.5} />
-          </mesh>
-          {/* water tank */}
-          <mesh position={[7.2, 1.2, 0]} material={MAT.iceTank} castShadow receiveShadow>
-            <sphereGeometry args={[1.3 * (0.6 + waterFill * 0.4), 24, 24]} />
-          </mesh>
-        </group>
+        <Pick id="cryoPlant">
+          <group position={[-2, 0, -14]}>
+            <mesh position={[0, 1.6, 0]} material={MAT.ch4Tank} castShadow receiveShadow>
+              <cylinderGeometry args={[1.4, 1.4, 3.2, 20]} />
+            </mesh>
+            <mesh position={[0, 0.15 + ch4Fill * 1.5, 0]} scale={[1.01, ch4Fill, 1.01]}>
+              <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
+              <meshStandardMaterial color="#7cc7e8" transparent opacity={0.5} />
+            </mesh>
+            <mesh position={[3.6, 1.6, 0]} material={MAT.ch4Tank} castShadow receiveShadow>
+              <cylinderGeometry args={[1.4, 1.4, 3.2, 20]} />
+            </mesh>
+            <mesh position={[3.6, 0.15 + loxFill * 1.5, 0]} scale={[1.01, loxFill, 1.01]}>
+              <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
+              <meshStandardMaterial color="#a9d9f0" transparent opacity={0.5} />
+            </mesh>
+            {/* water tank */}
+            <mesh position={[7.2, 1.2, 0]} material={MAT.iceTank} castShadow receiveShadow>
+              <sphereGeometry args={[1.3 * (0.6 + waterFill * 0.4), 24, 24]} />
+            </mesh>
+          </group>
+        </Pick>
       ) : null}
 
       {/* habitats with one warm porthole strip each */}
-      <Row count={st.habitat} spacing={4.5} origin={[2, 1.1, 2]}>
-        {(i, pos) => (
-          <group key={`hab-${i}`} position={pos}>
-            <mesh material={MAT.habitat} castShadow receiveShadow>
-              <capsuleGeometry args={[1.2, 1.6, 4, 16]} />
-            </mesh>
-            <mesh position={[0, 0.2, 1.14]} material={MAT.habitatWindow}>
-              <boxGeometry args={[0.9, 0.28, 0.16]} />
-            </mesh>
-          </group>
-        )}
-      </Row>
+      <Pick id="habitat">
+        <Row count={st.habitat} spacing={4.5} origin={[2, 1.1, 2]}>
+          {(i, pos) => (
+            <group key={`hab-${i}`} position={pos}>
+              <mesh material={MAT.habitat} castShadow receiveShadow>
+                <capsuleGeometry args={[1.2, 1.6, 4, 16]} />
+              </mesh>
+              <mesh position={[0, 0.2, 1.14]} material={MAT.habitatWindow}>
+                <boxGeometry args={[0.9, 0.28, 0.16]} />
+              </mesh>
+            </group>
+          )}
+        </Row>
+      </Pick>
 
       {/* greenhouse streets: the emotional heart, glowing green */}
-      {Array.from({ length: st.ghInflatable }, (_, i) => (
-        <GreenhouseStreet key={`ghi-${i}`} position={[2 + i * 3.2, 0, -6]} length={10} glow={ghGlow} />
-      ))}
-      {Array.from({ length: st.ghRigid }, (_, i) => (
-        <GreenhouseStreet key={`ghr-${i}`} position={[2 + i * 3.2, 0, -10]} length={8} glow={ghGlow} />
-      ))}
+      <Pick id="ghInflatable">
+        {Array.from({ length: st.ghInflatable }, (_, i) => (
+          <GreenhouseStreet key={`ghi-${i}`} position={[2 + i * 3.2, 0, -6]} length={10} glow={ghGlow} />
+        ))}
+      </Pick>
+      <Pick id="ghRigid">
+        {Array.from({ length: st.ghRigid }, (_, i) => (
+          <GreenhouseStreet key={`ghr-${i}`} position={[2 + i * 3.2, 0, -10]} length={8} glow={ghGlow} />
+        ))}
+      </Pick>
       {/* buried grow halls: berms with green portal glow (LED — storm-proof) */}
-      {Array.from({ length: st.ghBuried }, (_, i) => (
-        <group key={`ghb-${i}`} position={[-8 + i * 5, 0, -8]}>
-          <mesh position={[0, 0.7, 0]} material={MAT.berm} castShadow receiveShadow>
-            <sphereGeometry args={[2.4, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
-          </mesh>
-          <mesh position={[2.1, 0.5, 0]}>
-            <boxGeometry args={[0.6, 1, 1.2]} />
-            <meshStandardMaterial color="#183820" emissive="#59c96a" emissiveIntensity={1.8} />
-          </mesh>
-        </group>
-      ))}
-
-      {/* compost drums and digesters: visible architecture */}
-      <Row count={st.composter} spacing={2.4} origin={[-6, 0.7, 6]}>
-        {(i, pos) => (
-          <mesh key={`cmp-${i}`} position={pos} rotation={[0, 0, Math.PI / 2]} material={MAT.drum} castShadow receiveShadow>
-            <cylinderGeometry args={[0.7, 0.7, 1.8, 12]} />
-          </mesh>
-        )}
-      </Row>
-      <Row count={st.digester} spacing={2.6} origin={[-6, 0.9, 9]}>
-        {(i, pos) => (
-          <group key={`dig-${i}`} position={pos}>
-            <mesh material={MAT.digester} castShadow receiveShadow>
-              <cylinderGeometry args={[0.9, 0.9, 1.4, 12]} />
+      <Pick id="ghBuried">
+        {Array.from({ length: st.ghBuried }, (_, i) => (
+          <group key={`ghb-${i}`} position={[-8 + i * 5, 0, -8]}>
+            <mesh position={[0, 0.7, 0]} material={MAT.berm} castShadow receiveShadow>
+              <sphereGeometry args={[2.4, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
             </mesh>
-            <mesh position={[0, 0.95, 0]} material={MAT.digester} castShadow>
-              <sphereGeometry args={[0.9, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <mesh position={[2.1, 0.5, 0]}>
+              <boxGeometry args={[0.6, 1, 1.2]} />
+              <meshStandardMaterial color="#183820" emissive="#59c96a" emissiveIntensity={1.8} />
             </mesh>
           </group>
-        )}
-      </Row>
+        ))}
+      </Pick>
+
+      {/* compost drums and digesters: visible architecture */}
+      <Pick id="composter">
+        <Row count={st.composter} spacing={2.4} origin={[-6, 0.7, 6]}>
+          {(i, pos) => (
+            <mesh key={`cmp-${i}`} position={pos} rotation={[0, 0, Math.PI / 2]} material={MAT.drum} castShadow receiveShadow>
+              <cylinderGeometry args={[0.7, 0.7, 1.8, 12]} />
+            </mesh>
+          )}
+        </Row>
+      </Pick>
+      <Pick id="digester">
+        <Row count={st.digester} spacing={2.6} origin={[-6, 0.9, 9]}>
+          {(i, pos) => (
+            <group key={`dig-${i}`} position={pos}>
+              <mesh material={MAT.digester} castShadow receiveShadow>
+                <cylinderGeometry args={[0.9, 0.9, 1.4, 12]} />
+              </mesh>
+              <mesh position={[0, 0.95, 0]} material={MAT.digester} castShadow>
+                <sphereGeometry args={[0.9, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+              </mesh>
+            </group>
+          )}
+        </Row>
+      </Pick>
 
       {/* soil factory + fab shop */}
       {st.soilFactory > 0 ? (
-        <mesh position={[-16, 0.8, 10]} material={MAT.rustSteel} castShadow receiveShadow>
-          <boxGeometry args={[3.4, 1.6, 2.6]} />
-        </mesh>
+        <Pick id="soilFactory">
+          <mesh position={[-16, 0.8, 10]} material={MAT.rustSteel} castShadow receiveShadow>
+            <boxGeometry args={[3.4, 1.6, 2.6]} />
+          </mesh>
+        </Pick>
       ) : null}
       {st.fabShop > 0 ? (
-        <mesh position={[8, 1.4, 8]} material={MAT.steel} castShadow receiveShadow>
-          <boxGeometry args={[4.5, 2.8, 3.5]} />
-        </mesh>
+        <Pick id="fabShop">
+          <mesh position={[8, 1.4, 8]} material={MAT.steel} castShadow receiveShadow>
+            <boxGeometry args={[4.5, 2.8, 3.5]} />
+          </mesh>
+        </Pick>
       ) : null}
     </group>
   );
 }
 
-/** Atmosphere rig: sky, fog, sun, and dust all keyed to live optical depth. */
+/** Atmosphere rig: sky, fog, sun, and dust all keyed to the viewed sol's optical depth. */
 function DustRig(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
+  const scrubSol = useSimStore((s) => s.scrubSol);
   const site = getSite(sim.siteId);
-  // Recompute tau directly so the sky moves even while paused at sol 0.
-  const tau =
-    sim.history.length > 0
-      ? sim.history[sim.history.length - 1].tau
-      : opticalDepthAtSol(sim.sol, false, site.dustFactor);
+  // The scrubbed snapshot when viewing history; recompute tau directly when
+  // there is no history yet so the sky moves even while paused at sol 0.
+  const snap = viewSnapshot(sim, scrubSol);
+  const tau = snap ? snap.tau : opticalDepthAtSol(sim.sol, false, site.dustFactor);
   const sun = sunlightFraction(tau);
   // sunlightFraction tops out near 0.5 on a clear sol; normalize to [0, 1].
   const daylight = clamp(sun / 0.5, 0, 1);
@@ -726,6 +832,7 @@ function DustRig(): React.ReactElement {
 
 /** Canvas wrapper: soft-shadowed orbit view of the settlement. */
 export function CityScene(): React.ReactElement {
+  const setInspect = useSimStore((s) => s.setInspect);
   return (
     <div className="flex-1 relative min-w-0">
       <Canvas
@@ -734,13 +841,16 @@ export function CityScene(): React.ReactElement {
         camera={{ position: [38, 26, 24], fov: 40, near: 0.1, far: 700 }}
         gl={{ antialias: true }}
         style={{ background: '#1c0f0d' }}
+        onPointerMissed={() => setInspect(null)}
       >
         <DustRig />
         <Terrain />
         <Rocks />
         <City />
         <Starships />
-        <Rover />
+        <Pick id="rover">
+          <Rover />
+        </Pick>
         <OrbitControls
           target={[6, 0, -9]}
           maxPolarAngle={Math.PI / 2.2}
@@ -756,8 +866,9 @@ export function CityScene(): React.ReactElement {
       </Canvas>
       {/* crisp cinematic vignette; pure CSS, zero GPU cost */}
       <div className="absolute inset-0 pointer-events-none scene-vignette" />
+      <InspectCard />
       <div className="absolute bottom-2 left-2 text-[9px] text-[var(--dim)] pointer-events-none">
-        drag to orbit · greenhouse glow tracks real light levels · tank fills are live
+        drag to orbit · click any structure for its live datasheet · scrub the timeline to replay
       </div>
     </div>
   );

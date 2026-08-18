@@ -11,6 +11,7 @@ import { SOLS_PER_SYNODIC_WINDOW } from '../lib/constants';
 import { dailyChallenge } from '../lib/share/daily';
 import type { RunLog } from '../lib/share/recording';
 import { appendRunAction, emptyRunLog, replayRun } from '../lib/share/recording';
+import type { InspectId } from '../lib/sim/inspect';
 import type { Manifest, SimState } from '../lib/sim/state';
 import { createInitialState } from '../lib/sim/state';
 import type { SimActions } from '../lib/sim/step';
@@ -41,6 +42,10 @@ interface SimStore {
   runLog: RunLog;
   /** True while showing the "you loaded someone's run" notice. */
   sharedNotice: boolean;
+  /** Currently inspected structure in the 3D city; null = nothing selected. */
+  inspectId: InspectId | null;
+  /** Trends drawer (history charts) visibility. */
+  showTrends: boolean;
 
   /** Start a new game from the setup screen. */
   newGame: (seed: number, siteId: string, templateId: string) => void;
@@ -72,6 +77,10 @@ interface SimStore {
   setShowSetup: (v: boolean) => void;
   setShowSources: (v: boolean) => void;
   setShowOverlay: (v: boolean) => void;
+  /** Select (or clear) the inspected structure in the 3D city. */
+  setInspect: (id: InspectId | null) => void;
+  /** Toggle the Trends drawer. */
+  setShowTrends: (v: boolean) => void;
 }
 
 /** Default demo seed: chosen so a global dust storm hits mid–window 0 (onset ~sol 420) while the nuclear floor keeps the city alive — the demo tells the whole story by itself. */
@@ -88,6 +97,8 @@ export const useSimStore = create<SimStore>((set, get) => ({
   accumulator: 0,
   runLog: emptyRunLog(DEMO_SEED, 'arcadia', 'balanced'),
   sharedNotice: false,
+  inspectId: null,
+  showTrends: false,
 
   newGame: (seed, siteId, templateId) => {
     set({
@@ -98,6 +109,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       accumulator: 0,
       runLog: emptyRunLog(seed, siteId, templateId),
       sharedNotice: false,
+      inspectId: null,
     });
   },
 
@@ -115,6 +127,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       accumulator: 0,
       runLog: emptyRunLog(daily.seed, daily.siteId, daily.templateId, daily.dateKey),
       sharedNotice: false,
+      inspectId: null,
     });
   },
 
@@ -129,6 +142,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       accumulator: 0,
       runLog: log,
       sharedNotice: true,
+      inspectId: null,
     });
   },
 
@@ -169,7 +183,10 @@ export const useSimStore = create<SimStore>((set, get) => ({
     set({ sim: step(st.sim, dt, {}), scrubSol: null });
   },
 
-  setScrubSol: (sol) => set({ scrubSol: sol }),
+  // Scrubbing into history pauses the clock — otherwise the next tick would
+  // wipe the scrub position and yank the player back to live within 50 ms.
+  setScrubSol: (sol) =>
+    set((st) => ({ scrubSol: sol, playing: sol === null ? st.playing : false })),
 
   setCropMix: (mix) => {
     const st = get();
@@ -198,4 +215,6 @@ export const useSimStore = create<SimStore>((set, get) => ({
   setShowSetup: (v) => set({ showSetup: v }),
   setShowSources: (v) => set({ showSources: v }),
   setShowOverlay: (v) => set({ showOverlay: v }),
+  setInspect: (id) => set({ inspectId: id }),
+  setShowTrends: (v) => set({ showTrends: v }),
 }));

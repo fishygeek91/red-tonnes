@@ -31,6 +31,8 @@ export function TimeScrubber(): React.ReactElement {
   const setSpeed = useSimStore((s) => s.setSpeed);
   const setScrubSol = useSimStore((s) => s.setScrubSol);
   const jumpToNextWindow = useSimStore((s) => s.jumpToNextWindow);
+  const showTrends = useSimStore((s) => s.showTrends);
+  const setShowTrends = useSimStore((s) => s.setShowTrends);
 
   const h = sim.history;
   const { tauPath, fuelPath, maxFuel } = useMemo(() => {
@@ -77,6 +79,17 @@ export function TimeScrubber(): React.ReactElement {
         title="Simulate forward to the next synodic window arrival"
       >
         ⇥ Next window
+      </button>
+      <button
+        onClick={() => setShowTrends(!showTrends)}
+        className={`px-2 py-1.5 text-[10px] border uppercase tracking-widest ${
+          showTrends
+            ? 'border-[var(--rust-hot)] text-[var(--rust-hot)]'
+            : 'border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)] hover:border-[var(--rust)]'
+        }`}
+        title="Toggle the history charts drawer (power, fuel, calories, dust, loop closure)"
+      >
+        Trends
       </button>
 
       <div className="flex-1 relative h-10">

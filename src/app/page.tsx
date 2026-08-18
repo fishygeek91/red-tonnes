@@ -17,6 +17,7 @@ import { SimClock } from '../components/SimClock';
 import { SourcesDrawer } from '../components/SourcesDrawer';
 import { TimeScrubber } from '../components/TimeScrubber';
 import { TopBar } from '../components/TopBar';
+import { TrendsPanel } from '../components/TrendsPanel';
 
 // Three.js components are client-only; skip SSR to avoid WebGL on the server.
 const MarsGlobe = dynamic(() => import('../components/three/MarsGlobe').then((m) => m.MarsGlobe), {
@@ -45,6 +46,7 @@ export default function Page(): React.ReactElement {
         <EndBanner />
         <SharedRunNotice />
       </main>
+      <TrendsPanel />
       <TimeScrubber />
       <SourcesDrawer />
       <SetupModal />

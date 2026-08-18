@@ -143,6 +143,57 @@ export function selfSufficiencyOf(l: WindowLedger | undefined): number {
   return safeDiv(local, local + imported, 0);
 }
 
+/** The reliability triple that scales every plant in the city. */
+export interface PlantFactors {
+  /** Maintenance + farm-labor hours the city needs per sol. */
+  readonly laborNeeded: number;
+  /** Productive crew hours available per sol. */
+  readonly laborAvailable: number;
+  /** Labor coverage factor, clamped to [0.4, 1]. */
+  readonly laborFactor: number;
+  /** Habitat crowding factor, clamped to [0.6, 1]. */
+  readonly crowdFactor: number;
+  /** Total pressurized habitat volume, m3. */
+  readonly habitatVolumeM3: number;
+  /** Open-failure penalty factor, clamped to [0.3, 1]. */
+  readonly failureFactor: number;
+  /** The combined efficiency every capacity is multiplied by. */
+  readonly eff: number;
+}
+
+/**
+ * Compute the plant-efficiency factors for a state. Exported so the UI's
+ * inspection cards report the exact numbers the engine uses — one source
+ * of truth, no drift.
+ */
+export function plantFactors(s: SimState): PlantFactors {
+  const ghArea =
+    s.structures.ghInflatable * STRUCTURES.ghInflatable.capacityValue +
+    s.structures.ghRigid * STRUCTURES.ghRigid.capacityValue +
+    s.structures.ghBuried * STRUCTURES.ghBuried.capacityValue;
+  let laborNeeded = 0;
+  for (const id of Object.keys(s.structures) as Array<keyof typeof s.structures>) {
+    laborNeeded += s.structures[id] * STRUCTURES[id].crewHoursPerSol;
+  }
+  for (const crop of CROPS) {
+    laborNeeded += ghArea * (s.cropMix[crop.id] ?? 0) * crop.laborHPerM2Sol;
+  }
+  const laborAvailable = s.population * CREW_HOURS_PER_SOL;
+  const laborFactor = laborNeeded <= 0 ? 1 : clamp(safeDiv(laborAvailable, laborNeeded, 0), 0.4, 1);
+  const habitatVolumeM3 = s.structures.habitat * STRUCTURES.habitat.capacityValue;
+  const crowdFactor = clamp(safeDiv(habitatVolumeM3, s.population * HABITAT_M3_PER_PERSON, 1), 0.6, 1);
+  const failureFactor = clamp(1 - s.pendingFailures * UNREPAIRED_FAILURE_PENALTY, 0.3, 1);
+  return {
+    laborNeeded,
+    laborAvailable,
+    laborFactor,
+    crowdFactor,
+    habitatVolumeM3,
+    failureFactor,
+    eff: failureFactor * laborFactor * crowdFactor,
+  };
+}
+
 /**
  * Advance the simulation by `dtSols` whole sols.
  * Pure: returns a new state; the input is never mutated.
@@ -223,28 +274,18 @@ function stepOneSol(s: SimState): SimState {
   // ---- crew labor budget -----------------------------------------------------
   // Maintenance hours per structure plus farm labor per m2, against the crew's
   // productive hours. Overcrowded habitats erode output too: stressed, hot-
-  // bunked crews do not hit their maintenance schedules.
-  let laborNeeded = 0;
-  for (const id of Object.keys(s.structures) as Array<keyof typeof s.structures>) {
-    laborNeeded += s.structures[id] * STRUCTURES[id].crewHoursPerSol;
+  // bunked crews do not hit their maintenance schedules. The math lives in
+  // plantFactors (shared with the UI's inspection cards).
+  const pf = plantFactors(s);
+  if (pf.laborFactor < 0.95 && Math.floor(s.sol) % 50 === 0) {
+    logEvent(s, 'warning', `Crew overworked: ${pf.laborNeeded.toFixed(0)} maintenance hours needed vs ${pf.laborAvailable.toFixed(0)} available. Plant efficiency suffering — more crew or less sprawl.`);
   }
-  for (const crop of CROPS) {
-    laborNeeded += ghArea * (s.cropMix[crop.id] ?? 0) * crop.laborHPerM2Sol;
-  }
-  const laborAvailable = s.population * CREW_HOURS_PER_SOL;
-  const laborFactor = laborNeeded <= 0 ? 1 : clamp(safeDiv(laborAvailable, laborNeeded, 0), 0.4, 1);
-  const habitatVolume = s.structures.habitat * STRUCTURES.habitat.capacityValue;
-  const crowdFactor = clamp(safeDiv(habitatVolume, s.population * HABITAT_M3_PER_PERSON, 1), 0.6, 1);
-  if (laborFactor < 0.95 && Math.floor(s.sol) % 50 === 0) {
-    logEvent(s, 'warning', `Crew overworked: ${laborNeeded.toFixed(0)} maintenance hours needed vs ${laborAvailable.toFixed(0)} available. Plant efficiency suffering — more crew or less sprawl.`);
-  }
-  if (crowdFactor < 0.99 && Math.floor(s.sol) % 50 === 1) {
-    logEvent(s, 'warning', `Habitats overcrowded: ${habitatVolume.toFixed(0)} m³ for ${s.population} people (need ${s.population * HABITAT_M3_PER_PERSON}). Land another module.`);
+  if (pf.crowdFactor < 0.99 && Math.floor(s.sol) % 50 === 1) {
+    logEvent(s, 'warning', `Habitats overcrowded: ${pf.habitatVolumeM3.toFixed(0)} m³ for ${s.population} people (need ${s.population * HABITAT_M3_PER_PERSON}). Land another module.`);
   }
 
   // ---- reliability: failures + labor + crowding fold into one plant factor ---
-  const eff =
-    clamp(1 - s.pendingFailures * UNREPAIRED_FAILURE_PENALTY, 0.3, 1) * laborFactor * crowdFactor;
+  const eff = pf.eff;
 
   // ---- power supply --------------------------------------------------------
   const latFactor = clamp(Math.cos((site.latitudeDeg * Math.PI) / 180), 0.35, 1);

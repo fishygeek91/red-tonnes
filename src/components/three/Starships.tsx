@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { DEPARTURE_OFFSET_SOLS, SOLS_PER_SYNODIC_WINDOW } from '../../lib/constants';
 import { clamp } from '../../lib/types';
 import { useSimStore } from '../../store/useSimStore';
+import { Pick } from './Pick';
 
 /** Shared ship materials (module-level: allocated once). */
 const SHIP_MAT = {
@@ -131,21 +132,36 @@ function arrivalTargetY(phase: number, stagger: number): number {
   return 85 * (1 - t / 9);
 }
 
-/** The fleet, derived entirely from ledgers and the current sol. */
+/** The fleet, derived entirely from ledgers and the viewed sol (live or scrubbed). */
 export function Starships(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
-  const phase = sim.sol - sim.window * SOLS_PER_SYNODIC_WINDOW;
+  const scrubSol = useSimStore((s) => s.scrubSol);
+  // Scrubbing the timeline replays traffic: reconstruct the fleet as of the
+  // viewed sol instead of the live one. Ledgers are append-only, so history
+  // is just "ignore windows that had not opened yet".
+  const viewSol = scrubSol ?? sim.sol;
+  const viewWindow = Math.floor(viewSol / SOLS_PER_SYNODIC_WINDOW);
+  const phase = viewSol - viewWindow * SOLS_PER_SYNODIC_WINDOW;
 
   let landedTotal = 0;
   let departedTotal = 0;
   let landedThisWindow = 0;
   let departedThisWindow = 0;
   for (const ledger of sim.ledgers) {
+    if (ledger.window > viewWindow) {
+      continue; // this window had not opened yet at the viewed sol
+    }
     landedTotal += ledger.shipsLanded;
-    departedTotal += ledger.shipsDeparted;
-    if (ledger.window === sim.window) {
+    if (ledger.window < viewWindow) {
+      departedTotal += ledger.shipsDeparted;
+    } else {
       landedThisWindow = ledger.shipsLanded;
       departedThisWindow = ledger.shipsDeparted;
+      // This window's departure burn happens at phase 600; before that the
+      // ships are still on the pads even if they left later in real history.
+      if (phase >= DEPARTURE_OFFSET_SOLS) {
+        departedTotal += ledger.shipsDeparted;
+      }
     }
   }
   const groundShips = clamp(landedTotal - departedTotal, 0, MAX_GROUND_SHIPS);
@@ -167,5 +183,5 @@ export function Starships(): React.ReactElement {
     ships.push(<Starship key="ship-departing" x={x} z={z} targetY={targetY} />);
   }
 
-  return <group>{ships}</group>;
+  return <Pick id="starship">{ships}</Pick>;
 }

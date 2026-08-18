@@ -68,6 +68,10 @@ step(state, dtSols, actions) => nextState   // src/lib/sim/step.ts
   fail ~3× the fleet baseline), crew maintenance hours are a real constraint,
   and a breathing-gas shortfall taps the LOX farm before anyone suffocates.
 - Keyboard: **space** = play/pause, **N** = jump to next window.
+- Click any structure in the city for its live datasheet — output, bottleneck,
+  and failure hazard, computed with the engine's own formulas. **Trends**
+  opens six scrubbable history charts, and dragging the timeline replays the
+  whole city: dust, tank fills, and Starship traffic included.
 
 ## Where the constants live
 

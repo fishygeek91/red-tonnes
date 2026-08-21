@@ -79,9 +79,9 @@ export function EndBanner(): React.ReactElement | null {
   };
 
   return (
-    <div className="absolute inset-x-0 top-10 z-30 flex justify-center pointer-events-none">
+    <div className="absolute inset-x-2 top-2 lg:top-10 z-30 flex justify-center pointer-events-none">
       <div
-        className={`panel border px-6 py-4 max-w-xl max-h-[70vh] overflow-y-auto text-center pointer-events-auto ${
+        className={`panel border px-4 py-4 sm:px-6 max-w-xl w-full max-h-[55dvh] lg:max-h-[70vh] overflow-y-auto text-center pointer-events-auto ${
           isWin ? 'border-[var(--green)]' : 'border-[var(--fail)]'
         }`}
       >
@@ -105,7 +105,7 @@ export function EndBanner(): React.ReactElement | null {
                   <button
                     type="button"
                     onClick={() => scrubTo(finding.sol)}
-                    className="w-full text-left px-1.5 py-1 text-[11px] leading-snug border border-transparent hover:border-[var(--rust)] hover:bg-black/20"
+                    className="w-full text-left px-1.5 py-2 min-h-11 text-[11px] leading-snug border border-transparent hover:border-[var(--rust)] hover:bg-black/20"
                     title="Rewind the city to this sol"
                   >
                     <span className="num text-[var(--rust-hot)]">sol {finding.sol}</span>{' '}
@@ -116,7 +116,7 @@ export function EndBanner(): React.ReactElement | null {
                 </li>
               ))}
             </ol>
-            <div className="text-[8px] text-[var(--dim)] mt-1">click a finding to rewind the city</div>
+            <div className="text-[8px] text-[var(--dim)] mt-1">tap a finding to rewind the city</div>
           </div>
         ) : null}
         <div className="flex flex-wrap gap-2 justify-center mt-3">

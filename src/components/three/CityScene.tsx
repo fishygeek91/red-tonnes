@@ -17,6 +17,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useNarrowViewport } from '../../hooks/useNarrowViewport';
 import { getSite, opticalDepthAtSol } from '../../lib/sites';
 import { rngFromSeed, rngNext, type RngState } from '../../lib/rng';
 import { LOX_TO_CH4_RATIO } from '../../lib/constants';
@@ -120,12 +121,16 @@ function InspectCard(): React.ReactElement | null {
   const sim = useSimStore((s) => s.sim);
   const inspectId = useSimStore((s) => s.inspectId);
   const setInspect = useSimStore((s) => s.setInspect);
+  const narrow = useNarrowViewport();
   if (inspectId === null) {
     return null;
   }
   const card = inspect(sim, inspectId);
+  const chrome = narrow
+    ? 'absolute inset-x-2 bottom-2 max-h-[45%] overflow-y-auto w-auto'
+    : 'absolute top-2 left-2 w-[280px]';
   return (
-    <div className="absolute top-2 left-2 w-[280px] panel border border-[var(--rust)] p-3 z-20 shadow-lg">
+    <div className={`${chrome} panel border border-[var(--rust)] p-3 z-20 shadow-lg`}>
       <div className="flex items-start justify-between gap-2 mb-1">
         <div>
           <div className="text-[11px] text-[var(--rust-hot)] font-bold tracking-widest uppercase">
@@ -136,9 +141,11 @@ function InspectCard(): React.ReactElement | null {
           ) : null}
         </div>
         <button
+          type="button"
           onClick={() => setInspect(null)}
-          className="text-[var(--dim)] hover:text-[var(--text)] text-sm leading-none px-1"
+          className="min-w-11 min-h-11 text-[var(--dim)] hover:text-[var(--text)] text-lg leading-none"
           title="Close"
+          aria-label="Close datasheet"
         >
           ×
         </button>
@@ -784,6 +791,40 @@ function City(): React.ReactElement {
   );
 }
 
+/**
+ * Directional sun. Soft 2k shadows on desktop; no shadow map on phones.
+ * @param props.daylight - 0–1 normalized insolation after dust.
+ */
+function LiteSun(props: { daylight: number }): React.ReactElement {
+  const lite = useNarrowViewport();
+  if (lite) {
+    return (
+      <directionalLight
+        position={[SUN_DIR.x * 90, SUN_DIR.y * 90, SUN_DIR.z * 90]}
+        intensity={0.4 + props.daylight * 3.1}
+        color="#ffd9b0"
+      />
+    );
+  }
+  return (
+    <directionalLight
+      position={[SUN_DIR.x * 90, SUN_DIR.y * 90, SUN_DIR.z * 90]}
+      intensity={0.4 + props.daylight * 3.1}
+      color="#ffd9b0"
+      castShadow
+      shadow-mapSize={[2048, 2048]}
+      shadow-camera-left={-70}
+      shadow-camera-right={70}
+      shadow-camera-top={70}
+      shadow-camera-bottom={-70}
+      shadow-camera-near={20}
+      shadow-camera-far={220}
+      shadow-bias={-0.0004}
+      shadow-normalBias={0.02}
+    />
+  );
+}
+
 /** Atmosphere rig: sky, fog, sun, and dust all keyed to the viewed sol's optical depth. */
 function DustRig(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
@@ -808,21 +849,7 @@ function DustRig(): React.ReactElement {
       <fog attach="fog" args={[fogColor, fogNear, fogFar]} />
       {/* warm sky bounce + cool ground return instead of flat ambient */}
       <hemisphereLight args={['#e8a06a', '#4a2414', 0.4 + daylight * 0.55]} />
-      <directionalLight
-        position={[SUN_DIR.x * 90, SUN_DIR.y * 90, SUN_DIR.z * 90]}
-        intensity={0.4 + daylight * 3.1}
-        color="#ffd9b0"
-        castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-70}
-        shadow-camera-right={70}
-        shadow-camera-top={70}
-        shadow-camera-bottom={-70}
-        shadow-camera-near={20}
-        shadow-camera-far={220}
-        shadow-bias={-0.0004}
-        shadow-normalBias={0.02}
-      />
+      <LiteSun daylight={daylight} />
       {/* night-side worklights */}
       <pointLight position={[0, 8, 0]} intensity={1.6} color="#e2661a" distance={40} />
       <DustParticles tau={tau} />
@@ -833,13 +860,15 @@ function DustRig(): React.ReactElement {
 /** Canvas wrapper: soft-shadowed orbit view of the settlement. */
 export function CityScene(): React.ReactElement {
   const setInspect = useSimStore((s) => s.setInspect);
+  const inspectId = useSimStore((s) => s.inspectId);
+  const lite = useNarrowViewport();
   return (
-    <div className="flex-1 relative min-w-0">
+    <div className="flex-1 relative min-w-0 min-h-0">
       <Canvas
-        shadows="soft"
-        dpr={[1, 2]}
+        shadows={lite ? false : 'soft'}
+        dpr={lite ? [1, 1.5] : [1, 2]}
         camera={{ position: [38, 26, 24], fov: 40, near: 0.1, far: 700 }}
-        gl={{ antialias: true }}
+        gl={{ antialias: !lite }}
         style={{ background: '#1c0f0d' }}
         onPointerMissed={() => setInspect(null)}
       >
@@ -858,18 +887,21 @@ export function CityScene(): React.ReactElement {
           maxDistance={90}
           enableDamping
         />
-        {/* selective bloom: only emissives past the threshold glow (greenhouses,
-            beacons, engine plumes, the sun disc) — the rest stays crisp */}
-        <EffectComposer multisampling={4}>
-          <Bloom luminanceThreshold={0.9} mipmapBlur intensity={0.55} radius={0.6} />
-        </EffectComposer>
+        {lite ? null : (
+          <EffectComposer multisampling={4}>
+            <Bloom luminanceThreshold={0.9} mipmapBlur intensity={0.55} radius={0.6} />
+          </EffectComposer>
+        )}
       </Canvas>
-      {/* crisp cinematic vignette; pure CSS, zero GPU cost */}
       <div className="absolute inset-0 pointer-events-none scene-vignette" />
       <InspectCard />
-      <div className="absolute bottom-2 left-2 text-[9px] text-[var(--dim)] pointer-events-none">
-        drag to orbit · click any structure for its live datasheet · scrub the timeline to replay
-      </div>
+      {inspectId === null ? (
+        <div className="absolute bottom-2 left-2 text-[9px] text-[var(--dim)] pointer-events-none">
+          {lite
+            ? 'tap a building for its datasheet'
+            : 'drag to orbit · click any structure for its live datasheet · scrub the timeline to replay'}
+        </div>
+      ) : null}
     </div>
   );
 }

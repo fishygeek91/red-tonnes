@@ -204,8 +204,13 @@ function sample(history: readonly SolSnapshot[]): readonly SolSnapshot[] {
   return out;
 }
 
-/** The drawer itself: six charts over the whole run. */
-export function TrendsPanel(): React.ReactElement | null {
+/**
+ * History charts. Desktop uses the footer toggle; the phone Time sheet
+ * always shows them stacked.
+ * @param props.force - Render even when the desktop toggle is off.
+ * @param props.stacked - One column (phone sheet).
+ */
+export function TrendsPanel(props: { force?: boolean; stacked?: boolean } = {}): React.ReactElement | null {
   const sim = useSimStore((s) => s.sim);
   const ghost = useSimStore((s) => s.ghost);
   const showTrends = useSimStore((s) => s.showTrends);
@@ -234,12 +239,12 @@ export function TrendsPanel(): React.ReactElement | null {
     };
   }, [ghost, h]);
 
-  if (!showTrends) {
+  if (!props.force && !showTrends) {
     return null;
   }
   if (h.length < 2) {
     return (
-      <div className="panel border-t border-[var(--line)] px-3 py-4 text-[10px] text-[var(--dim)]">
+      <div className={`${props.stacked ? 'py-2' : 'panel border-t border-[var(--line)] px-3 py-4'} text-[10px] text-[var(--dim)]`}>
         Trends need a little history — let a few sols run.
       </div>
     );
@@ -253,8 +258,8 @@ export function TrendsPanel(): React.ReactElement | null {
   const quotaT = sim.params.methaloxPerShipT * sim.params.returnShipsPerWindow;
 
   return (
-    <div className="panel border-t border-[var(--line)] px-3 pt-2 pb-1">
-      <div className="grid grid-cols-3 gap-x-4 gap-y-1">
+    <div className={`${props.stacked ? 'pt-1 pb-1' : 'panel border-t border-[var(--line)] px-3 pt-2 pb-1'}`}>
+      <div className={`grid gap-x-4 gap-y-3 ${props.stacked ? 'grid-cols-1' : 'grid-cols-3'}`}>
         <Chart
           title="Power"
           unit="kWe"

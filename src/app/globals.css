@@ -27,6 +27,18 @@ body {
   overflow: hidden;
 }
 
+.safe-pad-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-pad-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.touch-panel input[type='range'] {
+  height: 2rem;
+}
+
 .num {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
@@ -118,7 +130,9 @@ button:hover {
   animation: sankey-flow 1.4s linear infinite;
   transition: opacity 0.15s ease;
 }
-.sankey-ribbon:hover {
+.sankey-ribbon:hover,
+.sankey-ribbon:focus,
+.sankey-ribbon:active {
   opacity: 0.9;
 }
 @media (prefers-reduced-motion: reduce) {

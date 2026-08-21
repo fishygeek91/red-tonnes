@@ -2,34 +2,29 @@
 
 /**
  * Top status bar: the seven numbers that decide whether anyone goes home.
- * Every stat carries a hover tooltip with its formula and source/assumption.
+ * Every stat is tap-to-explain (hover still shows the native tooltip).
  */
 
-import { useState } from 'react';
-import { buildRunPermalink, copyText } from '../lib/share/permalink';
-import { missionBrief } from '../lib/sim/brief';
 import { topBarStats } from '../lib/sim/derive';
+import { toneClass } from '../lib/ui/tone';
+import type { StatTone } from '../lib/ui/tone';
 import { useSimStore } from '../store/useSimStore';
+import { Explainable } from './Explainable';
+import { useMissionActions } from './useMissionActions';
 
-/** One labeled stat with a hover formula. */
+/** One labeled stat with a tap/click formula. */
 function Stat(props: {
   label: string;
   value: string;
   tooltip: string;
-  tone?: 'ok' | 'warn' | 'fail';
+  tone?: StatTone;
 }): React.ReactElement {
-  const color =
-    props.tone === 'fail'
-      ? 'text-[var(--fail)]'
-      : props.tone === 'warn'
-        ? 'text-[var(--warn)]'
-        : 'text-[var(--text)]';
   return (
     <div className="flex flex-col items-start px-3 border-l border-[var(--line)] first:border-l-0 min-w-0">
-      <span className="panel-title whitespace-nowrap">{props.label}</span>
-      <span className={`num text-sm ${color} stat-hover whitespace-nowrap`} title={props.tooltip}>
-        {props.value}
-      </span>
+      <Explainable explanation={props.tooltip}>
+        <span className="panel-title whitespace-nowrap">{props.label}</span>
+        <span className={`num text-sm ${toneClass(props.tone)} whitespace-nowrap`}>{props.value}</span>
+      </Explainable>
     </div>
   );
 }
@@ -37,32 +32,8 @@ function Stat(props: {
 /** The top bar itself. */
 export function TopBar(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
-  const runLog = useSimStore((s) => s.runLog);
-  const setShowSources = useSimStore((s) => s.setShowSources);
-  const setShowSetup = useSimStore((s) => s.setShowSetup);
-  const [shareCopied, setShareCopied] = useState(false);
+  const { shareCopied, copyShareLink, copyBrief, openSources, openSetup } = useMissionActions();
   const t = topBarStats(sim);
-
-  const copyShareLink = async (): Promise<void> => {
-    const url = await buildRunPermalink(runLog, sim.sol);
-    if (await copyText(url)) {
-      setShareCopied(true);
-      window.setTimeout(() => setShareCopied(false), 1500);
-    }
-  };
-
-  const copyBrief = (): void => {
-    const text = missionBrief(sim);
-    void navigator.clipboard.writeText(text).catch(() => {
-      // Clipboard can fail outside secure contexts; fall back to download.
-      const blob = new Blob([text], { type: 'text/markdown' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `red-tonnes-brief-sol${sim.sol}.md`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    });
-  };
 
   return (
     <header className="flex items-center h-14 px-3 panel border-b border-[var(--line)] gap-1 select-none">
@@ -121,6 +92,7 @@ export function TopBar(): React.ReactElement {
       </div>
       <div className="flex gap-1.5 pl-2">
         <button
+          type="button"
           onClick={copyBrief}
           className="text-[10px] px-2 py-1.5 border border-[var(--line)] hover:border-[var(--rust)] text-[var(--dim)] hover:text-[var(--text)] tracking-widest uppercase"
           title="Copy a markdown mission brief of the current state to the clipboard"
@@ -128,6 +100,7 @@ export function TopBar(): React.ReactElement {
           Brief
         </button>
         <button
+          type="button"
           onClick={() => void copyShareLink()}
           className="text-[10px] px-2 py-1.5 border border-[var(--line)] hover:border-[var(--rust)] text-[var(--dim)] hover:text-[var(--text)] tracking-widest uppercase"
           title="Copy a permalink that replays this exact run, sol for sol"
@@ -135,13 +108,15 @@ export function TopBar(): React.ReactElement {
           {shareCopied ? 'Copied!' : 'Share'}
         </button>
         <button
-          onClick={() => setShowSources(true)}
+          type="button"
+          onClick={openSources}
           className="text-[10px] px-2 py-1.5 border border-[var(--line)] hover:border-[var(--rust)] text-[var(--dim)] hover:text-[var(--text)] tracking-widest uppercase"
         >
           Sources
         </button>
         <button
-          onClick={() => setShowSetup(true)}
+          type="button"
+          onClick={openSetup}
           className="text-[10px] px-2 py-1.5 border border-[var(--rust)] text-[var(--rust-hot)] hover:bg-[var(--rust)] hover:text-black tracking-widest uppercase"
         >
           New game

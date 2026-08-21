@@ -185,6 +185,7 @@ export function WindowSankey(): React.ReactElement {
             stroke={r.flow.kind === 'imported' ? 'var(--rust)' : 'var(--green)'}
             strokeWidth={r.px}
             className="sankey-ribbon"
+            tabIndex={0}
           >
             <title>
               {`${r.flow.kind === 'imported' ? 'Earth cargo' : 'Made on Mars'} → ${r.flow.label}: ${fmtKg(r.flow.kg)}`}

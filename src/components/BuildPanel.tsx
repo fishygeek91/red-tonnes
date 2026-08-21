@@ -13,38 +13,66 @@ import { emptyManifest, manifestMassKg } from '../lib/sim/state';
 import type { StructureId } from '../lib/structures';
 import { STRUCTURE_ORDER, STRUCTURES } from '../lib/structures';
 import { useSimStore } from '../store/useSimStore';
+import { Explainable } from './Explainable';
 
 type Tab = 'manifest' | 'crops' | 'model';
+
+/**
+ * ± stepper with optional 44px touch targets.
+ * @param props.value - Current integer count.
+ * @param props.min - Inclusive floor (default 0).
+ * @param props.onChange - Next count.
+ * @param props.touch - Larger hit targets for the city-first sheet.
+ */
+function Stepper(props: {
+  value: number;
+  min?: number;
+  onChange: (n: number) => void;
+  touch: boolean;
+}): React.ReactElement {
+  const min = props.min ?? 0;
+  const box = props.touch
+    ? 'min-w-11 min-h-11 text-base'
+    : 'w-5 h-5';
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => props.onChange(Math.max(min, props.value - 1))}
+        className={`${box} border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)]`}
+        aria-label="Decrease"
+      >
+        −
+      </button>
+      <span className="num w-6 text-center">{props.value}</span>
+      <button
+        type="button"
+        onClick={() => props.onChange(props.value + 1)}
+        className={`${box} border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)]`}
+        aria-label="Increase"
+      >
+        +
+      </button>
+    </div>
+  );
+}
 
 /** Stepper row for one structure in the manifest. */
 function StructRow(props: {
   id: StructureId;
   count: number;
   onChange: (n: number) => void;
+  touch: boolean;
 }): React.ReactElement {
   const spec = STRUCTURES[props.id];
+  const tip = `${spec.capacity}. Landed mass ${(spec.massKg / 1000).toFixed(1)} t, draw ${spec.powerKwe} kWe, crew ${spec.crewHoursPerSol} h/sol.`;
   return (
     <div className="flex items-center gap-1 text-[10px] py-0.5">
-      <span
-        className="flex-1 text-[var(--dim)] stat-hover truncate"
-        title={`${spec.capacity}. Landed mass ${(spec.massKg / 1000).toFixed(1)} t, draw ${spec.powerKwe} kWe, crew ${spec.crewHoursPerSol} h/sol.`}
-      >
-        {spec.name}
-      </span>
+      <Explainable explanation={tip} className="flex-1 min-w-0">
+        <span className="text-[var(--dim)] truncate block">{spec.name}</span>
+      </Explainable>
       <span className="num w-10 text-right text-[var(--dim)]">{(spec.massKg / 1000).toFixed(1)}t</span>
-      <button
-        onClick={() => props.onChange(Math.max(0, props.count - 1))}
-        className="w-5 h-5 border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)]"
-      >
-        −
-      </button>
-      <span className="num w-5 text-center">{props.count}</span>
-      <button
-        onClick={() => props.onChange(props.count + 1)}
-        className="w-5 h-5 border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)]"
-      >
-        +
-      </button>
+      <Stepper value={props.count} onChange={props.onChange} touch={props.touch} />
     </div>
   );
 }
@@ -60,9 +88,9 @@ function KgRow(props: {
   return (
     <div className="text-[10px] py-0.5">
       <div className="flex justify-between">
-        <span className="text-[var(--dim)] stat-hover" title={props.tooltip}>
-          {props.label}
-        </span>
+        <Explainable explanation={props.tooltip} className="min-w-0">
+          <span className="text-[var(--dim)]">{props.label}</span>
+        </Explainable>
         <span className="num">{(props.value / 1000).toFixed(1)} t</span>
       </div>
       <input
@@ -78,8 +106,13 @@ function KgRow(props: {
   );
 }
 
-/** The panel. */
-export function BuildPanel(): React.ReactElement {
+/**
+ * Manifest / crops / model panel. Fills a desktop column or a phone sheet.
+ * @param props.touch - 44px steppers and taller sliders.
+ * @param props.className - Layout chrome (width, borders) from the parent.
+ */
+export function BuildPanel(props: { touch?: boolean; className?: string }): React.ReactElement {
+  const touch = props.touch === true;
   const sim = useSimStore((s) => s.sim);
   const setManifest = useSimStore((s) => s.setManifest);
   const setCropMix = useSimStore((s) => s.setCropMix);
@@ -101,14 +134,17 @@ export function BuildPanel(): React.ReactElement {
     update({ structures: { ...manifest.structures, [id]: n } });
   };
 
+  const chrome = props.className ?? 'flex-1 flex flex-col overflow-hidden panel border-t border-[var(--line)]';
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden panel border-t border-[var(--line)]">
+    <div className={`${chrome} ${touch ? 'touch-panel flex flex-col overflow-hidden' : ''}`}>
       <div className="flex border-b border-[var(--line)]">
         {(['manifest', 'crops', 'model'] as const).map((t) => (
           <button
             key={t}
+            type="button"
             onClick={() => setTab(t)}
-            className={`flex-1 py-1.5 text-[10px] uppercase tracking-widest ${
+            className={`flex-1 ${touch ? 'min-h-11 text-xs' : 'py-1.5 text-[10px]'} uppercase tracking-widest ${
               tab === t ? 'text-[var(--rust-hot)] border-b border-[var(--rust-hot)]' : 'text-[var(--dim)]'
             }`}
           >
@@ -141,7 +177,13 @@ export function BuildPanel(): React.ReactElement {
               </div>
             )}
             {STRUCTURE_ORDER.map((id) => (
-              <StructRow key={id} id={id} count={manifest.structures[id] ?? 0} onChange={(n) => updateStruct(id, n)} />
+              <StructRow
+                key={id}
+                id={id}
+                count={manifest.structures[id] ?? 0}
+                onChange={(n) => updateStruct(id, n)}
+                touch={touch}
+              />
             ))}
             <div className="border-t border-[var(--line)] mt-2 pt-1">
               <KgRow label="Earth rations" value={manifest.earthFoodKg} max={40000} tooltip="4,000 kcal/kg. 12 crew eat ~0.75 kg/sol each when nothing grows." onChange={(v) => update({ earthFoodKg: v })} />
@@ -151,14 +193,14 @@ export function BuildPanel(): React.ReactElement {
               <KgRow label="Fertilizer N" value={manifest.fertilizerNKg} max={5000} tooltip="Plant-available nitrogen. Close the compost/urine loop or keep paying this forever." onChange={(v) => update({ fertilizerNKg: v })} />
               <KgRow label="Fertilizer P+K" value={manifest.fertilizerPkKg} max={5000} tooltip="Split 40/60 P/K on arrival." onChange={(v) => update({ fertilizerPkKg: v })} />
               <div className="flex items-center justify-between text-[10px] py-1">
-                <span className="text-[var(--dim)] stat-hover" title="500 kg landed per person (body + effects + seat hardware, ASSUMED)">
-                  New crew
-                </span>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => update({ crew: Math.max(0, manifest.crew - 1) })} className="w-5 h-5 border border-[var(--line)] text-[var(--dim)]">−</button>
-                  <span className="num w-6 text-center">{manifest.crew}</span>
-                  <button onClick={() => update({ crew: manifest.crew + 1 })} className="w-5 h-5 border border-[var(--line)] text-[var(--dim)]">+</button>
-                </div>
+                <Explainable explanation="500 kg landed per person (body + effects + seat hardware, ASSUMED)">
+                  <span className="text-[var(--dim)]">New crew</span>
+                </Explainable>
+                <Stepper
+                  value={manifest.crew}
+                  onChange={(n) => update({ crew: n })}
+                  touch={touch}
+                />
               </div>
             </div>
           </div>
@@ -172,12 +214,11 @@ export function BuildPanel(): React.ReactElement {
             {CROPS.map((c) => (
               <div key={c.id} className="text-[10px] py-0.5">
                 <div className="flex justify-between">
-                  <span
-                    className="text-[var(--dim)] stat-hover"
-                    title={`${c.edibleGPerM2Sol} g/m²/sol edible · ${c.kcalPerKg} kcal/kg · ${c.proteinGPerKg} g protein/kg · ${c.harvestSols}-sol cycle · ${c.waterLPerKgEdible} L/kg${c.fixesNitrogen ? ' · fixes N' : ''}`}
+                  <Explainable
+                    explanation={`${c.edibleGPerM2Sol} g/m²/sol edible · ${c.kcalPerKg} kcal/kg · ${c.proteinGPerKg} g protein/kg · ${c.harvestSols}-sol cycle · ${c.waterLPerKgEdible} L/kg${c.fixesNitrogen ? ' · fixes N' : ''}`}
                   >
-                    {c.name}
-                  </span>
+                    <span className="text-[var(--dim)]">{c.name}</span>
+                  </Explainable>
                   <span className="num">{((sim.cropMix[c.id] ?? 0) * 100).toFixed(0)}%</span>
                 </div>
                 <input
@@ -197,18 +238,18 @@ export function BuildPanel(): React.ReactElement {
           <div className="space-y-3 text-[10px]">
             <div>
               <div className="flex justify-between">
-                <span className="text-[var(--dim)] stat-hover" title="ASSUMED: SpaceX '100 t class' to the Mars surface. Nobody has landed one yet; that is why it is a slider.">
-                  Starship payload
-                </span>
+                <Explainable explanation="ASSUMED: SpaceX '100 t class' to the Mars surface. Nobody has landed one yet; that is why it is a slider.">
+                  <span className="text-[var(--dim)]">Starship payload</span>
+                </Explainable>
                 <span className="num">{sim.params.starshipPayloadT} t</span>
               </div>
               <input type="range" min={50} max={200} step={5} value={sim.params.starshipPayloadT} onChange={(e) => setParams({ starshipPayloadT: Number(e.target.value) })} className="w-full h-2" />
             </div>
             <div>
               <div className="flex justify-between">
-                <span className="text-[var(--dim)] stat-hover" title="ASSUMED: full methalox load per returning ship, 1,000–1,200 t per SpaceX figures.">
-                  Methalox per ship
-                </span>
+                <Explainable explanation="ASSUMED: full methalox load per returning ship, 1,000–1,200 t per SpaceX figures.">
+                  <span className="text-[var(--dim)]">Methalox per ship</span>
+                </Explainable>
                 <span className="num">{sim.params.methaloxPerShipT} t</span>
               </div>
               <input type="range" min={600} max={1500} step={50} value={sim.params.methaloxPerShipT} onChange={(e) => setParams({ methaloxPerShipT: Number(e.target.value) })} className="w-full h-2" />
@@ -222,19 +263,23 @@ export function BuildPanel(): React.ReactElement {
             </div>
             <div>
               <div className="flex justify-between">
-                <span className="text-[var(--dim)] stat-hover" title="Crew ships that must fuel and depart each window. Miss the quota and they are stranded.">
-                  Return ships / window
-                </span>
+                <Explainable explanation="Crew ships that must fuel and depart each window. Miss the quota and they are stranded.">
+                  <span className="text-[var(--dim)]">Return ships / window</span>
+                </Explainable>
                 <span className="num">{sim.params.returnShipsPerWindow}</span>
               </div>
               <input type="range" min={0} max={4} step={1} value={sim.params.returnShipsPerWindow} onChange={(e) => setParams({ returnShipsPerWindow: Number(e.target.value) })} className="w-full h-2" />
             </div>
-            <label className="flex items-center gap-2 pt-2 border-t border-[var(--line)] cursor-pointer">
-              <input type="checkbox" checked={showOverlay} onChange={(e) => setShowOverlay(e.target.checked)} />
-              <span className="text-[var(--dim)] stat-hover" title="Teaching layer, not a win condition: published CO2 inventories cannot make Mars breathable (Jakosky & Edwards 2018).">
-                Planet overlay: could we terraform?
-              </span>
-            </label>
+            <div className="flex items-center gap-2 pt-2 border-t border-[var(--line)]">
+              <input
+                type="checkbox"
+                checked={showOverlay}
+                onChange={(e) => setShowOverlay(e.target.checked)}
+              />
+              <Explainable explanation="Teaching layer, not a win condition: published CO2 inventories cannot make Mars breathable (Jakosky & Edwards 2018).">
+                <span className="text-[var(--dim)]">Planet overlay: could we terraform?</span>
+              </Explainable>
+            </div>
           </div>
         )}
       </div>

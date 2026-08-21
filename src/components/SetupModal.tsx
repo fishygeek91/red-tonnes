@@ -3,6 +3,7 @@
 /**
  * New-game setup: pick a site, a first-window manifest template, and a seed.
  * Deterministic: the same three choices always produce the same history.
+ * Full-screen scroll on phones; centered card on desktop.
  */
 
 import { useState } from 'react';
@@ -24,26 +25,42 @@ export function SetupModal(): React.ReactElement | null {
   if (!show) {
     return null;
   }
-  // Today's challenge: same seed, site and manifest for every player (UTC day).
   const daily = dailyChallenge(new Date());
   const dailySite = getSite(daily.siteId);
-  const dailyTemplate =
-    MANIFEST_TEMPLATES.find((t) => t.id === daily.templateId) ?? MANIFEST_TEMPLATES[0];
+  const dailyTemplate = MANIFEST_TEMPLATES.find((t) => t.id === daily.templateId);
+  const dailyName = dailyTemplate !== undefined ? dailyTemplate.name : 'Balanced';
   return (
-    <div className="absolute inset-0 z-50 bg-black/70 flex items-center justify-center" onClick={() => setShow(false)}>
-      <div className="w-[560px] panel border border-[var(--rust)] p-5" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-sm tracking-[0.25em] text-[var(--rust-hot)] mb-4">NEW CITY</h2>
+    <div
+      className="absolute inset-0 z-50 bg-black/70 flex items-stretch lg:items-center justify-center"
+      onClick={() => setShow(false)}
+    >
+      <div
+        className="w-full lg:w-[560px] h-full lg:h-auto max-h-full overflow-y-auto panel border border-[var(--rust)] p-5 safe-pad-top safe-pad-bottom"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm tracking-[0.25em] text-[var(--rust-hot)]">NEW CITY</h2>
+          <button
+            type="button"
+            onClick={() => setShow(false)}
+            className="min-w-11 min-h-11 text-[var(--dim)] hover:text-[var(--text)] text-lg leading-none"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
 
         <h3 className="panel-title mb-1">Daily challenge</h3>
         <button
+          type="button"
           onClick={() => startDaily()}
-          className="w-full text-left p-2 border border-[var(--green)] hover:bg-[var(--green)]/10 text-[11px] mb-4"
+          className="w-full text-left p-3 min-h-11 border border-[var(--green)] hover:bg-[var(--green)]/10 text-[11px] mb-4"
           title="Everyone gets the same seed, site and manifest today. Share your scorecard."
         >
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span className="text-[var(--green)]">Daily #{daily.dayNumber} — {daily.dateKey}</span>
             <span className="num text-[var(--dim)]">
-              {dailySite.name} · {dailyTemplate.name}
+              {dailySite.name} · {dailyName}
             </span>
           </div>
           <div className="text-[var(--dim)] text-[10px]">
@@ -56,12 +73,13 @@ export function SetupModal(): React.ReactElement | null {
           {SITES.map((s) => (
             <button
               key={s.id}
+              type="button"
               onClick={() => setSiteId(s.id)}
-              className={`text-left p-2 border text-[11px] ${
+              className={`text-left p-3 min-h-11 border text-[11px] ${
                 siteId === s.id ? 'border-[var(--rust-hot)]' : 'border-[var(--line)] hover:border-[var(--dim)]'
               }`}
             >
-              <div className="flex justify-between">
+              <div className="flex justify-between gap-2">
                 <span className="text-[var(--text)]">{s.name}</span>
                 <span className="num text-[var(--dim)]">
                   {s.latitudeDeg.toFixed(0)}° · ice {s.iceDepthM} m · dust ×{s.dustFactor}
@@ -73,12 +91,13 @@ export function SetupModal(): React.ReactElement | null {
         </div>
 
         <h3 className="panel-title mb-1">First cargo manifest</h3>
-        <div className="grid grid-cols-3 gap-1 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 mb-4">
           {MANIFEST_TEMPLATES.map((t) => (
             <button
               key={t.id}
+              type="button"
               onClick={() => setTemplateId(t.id)}
-              className={`text-left p-2 border text-[11px] ${
+              className={`text-left p-3 min-h-11 border text-[11px] ${
                 templateId === t.id ? 'border-[var(--rust-hot)]' : 'border-[var(--line)] hover:border-[var(--dim)]'
               }`}
             >
@@ -88,19 +107,20 @@ export function SetupModal(): React.ReactElement | null {
           ))}
         </div>
 
-        <div className="flex items-end gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
           <div className="flex-1">
             <h3 className="panel-title mb-1">Seed (deterministic: same seed, same storms)</h3>
             <input
               type="number"
               value={seed}
               onChange={(e) => setSeed(Math.floor(Number(e.target.value) || 0))}
-              className="w-full bg-[var(--panel-2)] border border-[var(--line)] px-2 py-1.5 num text-sm"
+              className="w-full bg-[var(--panel-2)] border border-[var(--line)] px-2 py-2 num text-sm min-h-11"
             />
           </div>
           <button
+            type="button"
             onClick={() => newGame(seed, siteId, templateId)}
-            className="px-6 py-2 border border-[var(--rust)] text-[var(--rust-hot)] hover:bg-[var(--rust)] hover:text-black tracking-[0.2em] uppercase text-xs"
+            className="px-6 min-h-11 border border-[var(--rust)] text-[var(--rust-hot)] hover:bg-[var(--rust)] hover:text-black tracking-[0.2em] uppercase text-xs"
           >
             Land
           </button>

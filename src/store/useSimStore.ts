@@ -22,6 +22,9 @@ import { step } from '../lib/sim/step';
 /** Playback speeds in sols advanced per real second. */
 export const SPEEDS: readonly number[] = [1, 5, 20, 60];
 
+/** Bottom-sheet panels on the phone/tablet city-first shell. */
+export type MobileSheetId = 'plan' | 'status' | 'time';
+
 /** Store shape. */
 interface SimStore {
   /** The authoritative simulation state. */
@@ -52,6 +55,8 @@ interface SimStore {
   ghost: GhostRun | null;
   /** Procedural audio bed armed (created on the Sound button — a user gesture). */
   audioEnabled: boolean;
+  /** Open phone/tablet sheet; null = city unobstructed. */
+  mobileSheet: MobileSheetId | null;
 
   /** Start a new game from the setup screen. */
   newGame: (seed: number, siteId: string, templateId: string) => void;
@@ -93,6 +98,8 @@ interface SimStore {
   setShowTrends: (v: boolean) => void;
   /** Arm or silence the procedural audio bed. */
   setAudioEnabled: (v: boolean) => void;
+  /** Open or close a city-first bottom sheet. */
+  setMobileSheet: (sheet: MobileSheetId | null) => void;
 }
 
 /** Default demo seed: chosen so a global dust storm hits mid–window 0 (onset ~sol 420) while the nuclear floor keeps the city alive — the demo tells the whole story by itself. */
@@ -113,6 +120,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   showTrends: false,
   ghost: null,
   audioEnabled: false,
+  mobileSheet: null,
 
   newGame: (seed, siteId, templateId) => {
     set({
@@ -125,6 +133,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       sharedNotice: false,
       inspectId: null,
       ghost: null,
+      mobileSheet: null,
     });
   },
 
@@ -144,6 +153,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       sharedNotice: false,
       inspectId: null,
       ghost: null,
+      mobileSheet: null,
     });
   },
 
@@ -162,6 +172,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       sharedNotice: true,
       inspectId: null,
       ghost: ghostFromReplay(log, replayed),
+      mobileSheet: null,
     });
   },
 
@@ -183,6 +194,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
       runLog: emptyRunLog(log.seed, log.siteId, log.templateId, log.daily),
       sharedNotice: false,
       inspectId: null,
+      mobileSheet: null,
     });
   },
 
@@ -254,10 +266,15 @@ export const useSimStore = create<SimStore>((set, get) => ({
     });
   },
 
-  setShowSetup: (v) => set({ showSetup: v }),
-  setShowSources: (v) => set({ showSources: v }),
+  setShowSetup: (v) => set({ showSetup: v, mobileSheet: v ? null : get().mobileSheet }),
+  setShowSources: (v) => set({ showSources: v, mobileSheet: v ? null : get().mobileSheet }),
   setShowOverlay: (v) => set({ showOverlay: v }),
-  setInspect: (id) => set({ inspectId: id }),
+  setInspect: (id) => set({ inspectId: id, mobileSheet: id !== null ? null : get().mobileSheet }),
   setShowTrends: (v) => set({ showTrends: v }),
   setAudioEnabled: (v) => set({ audioEnabled: v }),
+  setMobileSheet: (sheet) =>
+    set({
+      mobileSheet: sheet,
+      inspectId: sheet !== null ? null : get().inspectId,
+    }),
 }));

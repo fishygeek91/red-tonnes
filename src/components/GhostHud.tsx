@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GhostRun } from '../lib/share/ghost';
 import { ghostFuelLeadSols, ghostSnapshotAt } from '../lib/share/ghost';
 import { topBarStats } from '../lib/sim/derive';
+import { useNarrowViewport } from '../hooks/useNarrowViewport';
 import { useSimStore } from '../store/useSimStore';
 
 /** One on-screen ghost-milestone toast. */
@@ -36,6 +37,7 @@ export function GhostHud(): React.ReactElement | null {
   const ghost = useSimStore((s) => s.ghost);
   const sharedNotice = useSimStore((s) => s.sharedNotice);
   const clearGhost = useSimStore((s) => s.clearGhost);
+  const narrow = useNarrowViewport();
 
   const [toasts, setToasts] = useState<readonly GhostToast[]>([]);
   // Sol already scanned for milestones; toasts fire for (prevSol, sol].
@@ -94,13 +96,17 @@ export function GhostHud(): React.ReactElement | null {
   const ghostDone = sim.sol >= ghost.finalSol;
 
   return (
-    <div className="absolute left-[308px] top-2 z-20 w-72 pointer-events-none flex flex-col gap-1">
+    <div
+      className={`absolute left-2 right-2 z-20 w-72 max-w-[calc(100%-1rem)] pointer-events-none flex flex-col gap-1 ${
+        narrow ? 'top-14' : 'top-2'
+      }`}
+    >
       <div className="panel border border-[var(--line)] px-3 py-2 pointer-events-auto">
         <div className="flex justify-between items-baseline">
           <span className="panel-title text-[var(--rust-hot)]">Ghost race</span>
           <button
             onClick={clearGhost}
-            className="text-[9px] px-1.5 py-0.5 border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)] hover:border-[var(--rust)] uppercase tracking-widest"
+            className="min-h-11 px-2 text-[10px] border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)] hover:border-[var(--rust)] uppercase tracking-widest"
             title="Drop the ghost overlay"
           >
             End race

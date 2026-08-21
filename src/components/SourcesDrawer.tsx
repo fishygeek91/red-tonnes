@@ -28,15 +28,22 @@ export function SourcesDrawer(): React.ReactElement | null {
     return null;
   }
   return (
-    <div className="absolute inset-0 z-40 flex" onClick={() => setShow(false)}>
+    <div className="absolute inset-0 z-40 flex flex-col lg:flex-row" onClick={() => setShow(false)}>
       <div className="flex-1 bg-black/60" />
       <div
-        className="w-[440px] h-full panel border-l border-[var(--rust)] overflow-y-auto p-4"
+        className="w-full lg:w-[440px] h-[75%] lg:h-full panel border-t lg:border-t-0 lg:border-l border-[var(--rust)] overflow-y-auto p-4 safe-pad-bottom"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-3">
           <h2 className="text-sm tracking-[0.25em] text-[var(--rust-hot)]">SOURCES & ASSUMPTIONS</h2>
-          <button onClick={() => setShow(false)} className="text-[var(--dim)] hover:text-[var(--text)] text-lg leading-none">×</button>
+          <button
+            type="button"
+            onClick={() => setShow(false)}
+            className="min-w-11 min-h-11 text-[var(--dim)] hover:text-[var(--text)] text-lg leading-none"
+            aria-label="Close sources"
+          >
+            ×
+          </button>
         </div>
         <p className="text-[10px] text-[var(--dim)] mb-3">
           Anything labeled ASSUMED is a modeling choice, not a measurement — and the load-bearing ones are sliders.

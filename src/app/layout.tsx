@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 
@@ -33,6 +33,13 @@ export const metadata: Metadata = {
   },
 };
 
+/** Phone-first viewport: cover the notch / home indicator so the dock can pad. */
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+};
+
 /** Root layout: dark industrial shell, no scroll, fonts wired to CSS vars. */
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
@@ -40,7 +47,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="h-screen w-screen overflow-hidden">{children}</body>
+      <body className="h-dvh w-screen overflow-hidden">{children}</body>
     </html>
   );
 }

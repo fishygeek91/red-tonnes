@@ -1,38 +1,33 @@
 'use client';
 
 /**
- * Right-hand live ledgers: inventories in real units, the window mass Sankey,
+ * Live ledgers: inventories in real units, the window mass Sankey,
  * the 2-missed-windows resilience test, industry tier, and the event log.
- * Hover any number for its formula/assumption.
+ * Tap any number for its formula/assumption (hover still works on desktop).
  */
 
 import { missedWindowTest } from '../lib/sim/derive';
+import { toneClass } from '../lib/ui/tone';
+import type { StatTone } from '../lib/ui/tone';
 import { industryTierFor, INDUSTRY_TIERS } from '../lib/structures';
 import { useSimStore } from '../store/useSimStore';
+import { Explainable } from './Explainable';
 import { WindowSankey } from './WindowSankey';
 
-/** A single inventory line with hover formula. */
+/** A single inventory line with tap-to-explain formula. */
 function Line(props: {
   label: string;
   value: string;
   tooltip: string;
-  tone?: 'ok' | 'warn' | 'green' | 'ice';
+  tone?: StatTone;
 }): React.ReactElement {
-  const color =
-    props.tone === 'warn'
-      ? 'text-[var(--warn)]'
-      : props.tone === 'green'
-        ? 'text-[var(--green)]'
-        : props.tone === 'ice'
-          ? 'text-[var(--ice)]'
-          : 'text-[var(--text)]';
   return (
-    <div className="flex justify-between items-baseline text-xs py-0.5">
-      <span className="text-[var(--dim)]">{props.label}</span>
-      <span className={`num ${color} stat-hover`} title={props.tooltip}>
-        {props.value}
-      </span>
-    </div>
+    <Explainable explanation={props.tooltip} align="end" className="py-1">
+      <div className="flex justify-between items-baseline text-xs gap-2">
+        <span className="text-[var(--dim)] shrink-0">{props.label}</span>
+        <span className={`num ${toneClass(props.tone)} min-w-0 text-right`}>{props.value}</span>
+      </div>
+    </Explainable>
   );
 }
 
@@ -44,8 +39,11 @@ function fmtKg(kg: number): string {
   return `${kg.toFixed(0)} kg`;
 }
 
-/** The full right panel. */
-export function Ledgers(): React.ReactElement {
+/**
+ * Inventory + Sankey + log. Fills a desktop column or a phone sheet.
+ * @param props.className - Width/border chrome from the parent layout.
+ */
+export function Ledgers(props: { className?: string }): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
   const inv = sim.inv;
   const test = missedWindowTest(sim);
@@ -54,9 +52,10 @@ export function Ledgers(): React.ReactElement {
   const localFoodKg = Object.values(inv.localFoodKg).reduce((a, b) => a + b, 0);
   const compostInWork = sim.compostBatches.reduce((a, b) => a + b.feedKg, 0);
   const events = [...sim.events].slice(-40).reverse();
+  const chrome = props.className ?? 'w-[340px] shrink-0 panel border-l border-[var(--line)] flex flex-col overflow-hidden';
 
   return (
-    <aside className="w-[340px] shrink-0 panel border-l border-[var(--line)] flex flex-col overflow-hidden">
+    <aside className={`${chrome} flex flex-col overflow-hidden`}>
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
         <section>
           <h3 className="panel-title mb-1">Propellant & ISRU</h3>

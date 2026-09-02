@@ -10,32 +10,57 @@
  */
 
 import { useFrame } from '@react-three/fiber';
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { DEPARTURE_OFFSET_SOLS, SOLS_PER_SYNODIC_WINDOW } from '../../lib/constants';
 import { clamp } from '../../lib/types';
 import { useSimStore } from '../../store/useSimStore';
+import { buildHeatTileMap } from './materials';
 import { Pick } from './Pick';
 
 /** Shared ship materials (module-level: allocated once). */
 const SHIP_MAT = {
-  hull: new THREE.MeshStandardMaterial({ color: '#c9ced3', roughness: 0.32, metalness: 0.45 }),
-  nose: new THREE.MeshStandardMaterial({ color: '#aeb4ba', roughness: 0.3, metalness: 0.45 }),
-  fin: new THREE.MeshStandardMaterial({ color: '#3c4148', roughness: 0.5, metalness: 0.3 }),
+  hull: new THREE.MeshStandardMaterial({ color: '#c9ced3', roughness: 0.34, metalness: 0.55 }),
+  nose: new THREE.MeshStandardMaterial({ color: '#aeb4ba', roughness: 0.3, metalness: 0.5 }),
+  fin: new THREE.MeshStandardMaterial({ color: '#3c4148', roughness: 0.48, metalness: 0.4 }),
+  tile: new THREE.MeshStandardMaterial({ color: '#4a4540', roughness: 0.7, metalness: 0.15 }),
   windowBand: new THREE.MeshStandardMaterial({
     color: '#1a1712',
     emissive: '#ffd9a0',
     emissiveIntensity: 1.8,
     roughness: 0.4,
   }),
-  plume: new THREE.MeshStandardMaterial({
-    color: '#2b1608',
-    emissive: '#ffb36b',
-    emissiveIntensity: 4,
+  plume: new THREE.MeshBasicMaterial({
+    color: '#ffb36b',
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.82,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  }),
+  plumeOuter: new THREE.MeshBasicMaterial({
+    color: '#ff7a2a',
+    transparent: true,
+    opacity: 0.35,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
   }),
 };
+
+let tileMapBound = false;
+
+/** Bind the hex-tile canvas to the hull the first time a ship mounts on the client. */
+function bindShipMaps(): void {
+  if (tileMapBound || typeof document === 'undefined') {
+    return;
+  }
+  const map = buildHeatTileMap();
+  if (map) {
+    map.repeat.set(6, 4);
+    SHIP_MAT.hull.map = map;
+    SHIP_MAT.hull.needsUpdate = true;
+  }
+  tileMapBound = true;
+}
 
 /** Max ships drawn on the apron; beyond this the fleet is implied. */
 const MAX_GROUND_SHIPS = 6;
@@ -50,14 +75,20 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
   const group = useRef<THREE.Group>(null);
   const plume = useRef<THREE.Mesh>(null);
   const engineLight = useRef<THREE.PointLight>(null);
+  const hinges = useRef<THREE.Group>(null);
+  const plumeOuter = useRef<THREE.Mesh>(null);
+  const kick = useRef<THREE.Mesh>(null);
+  const kickMat = useRef<THREE.MeshBasicMaterial>(null);
   const initialized = useRef(false);
+  useLayoutEffect(() => {
+    bindShipMaps();
+  }, []);
 
   useFrame((state, delta) => {
     const g = group.current;
     if (!g) {
       return;
     }
-    // First frame: snap to the target so a mid-descent mount starts high.
     if (!initialized.current) {
       g.position.y = props.targetY;
       initialized.current = true;
@@ -69,51 +100,123 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
       const flicker = 1 + 0.18 * Math.sin(state.clock.elapsedTime * 31 + props.x);
       plume.current.scale.set(flicker, 1 + 0.25 * Math.abs(Math.sin(state.clock.elapsedTime * 17)), flicker);
     }
+    if (plumeOuter.current) {
+      plumeOuter.current.visible = airborne;
+      const flicker = 1 + 0.12 * Math.sin(state.clock.elapsedTime * 19 + props.x);
+      plumeOuter.current.scale.set(flicker * 1.35, 1.15, flicker * 1.35);
+    }
+    if (kick.current && kickMat.current) {
+      const near = clamp(1 - g.position.y / 14, 0, 1);
+      const blowing = g.position.y > 0.12 && g.position.y < 16;
+      kick.current.visible = blowing;
+      kick.current.position.y = -g.position.y + 0.1;
+      const swell = 1.6 + (1 - near) * 4.2;
+      kick.current.scale.set(swell, 1, swell);
+      kickMat.current.opacity = blowing ? near * 0.42 : 0;
+    }
     if (engineLight.current) {
       engineLight.current.intensity = airborne
         ? 16 + Math.sin(state.clock.elapsedTime * 29) * 4
         : 0;
     }
+    const fold = clamp((g.position.y - 0.2) / 7, 0, 1);
+    const angle = 0.1 + 0.5 * (1 - fold);
+    const hingeRoot = hinges.current;
+    if (hingeRoot) {
+      for (let i = 0; i < hingeRoot.children.length; i += 1) {
+        const yaw = hingeRoot.children[i];
+        const hinge = yaw?.children[0];
+        if (hinge) {
+          hinge.rotation.z = angle;
+        }
+      }
+    }
   });
 
   return (
     <group ref={group} position={[props.x, 0, props.z]}>
-      {/* engine skirt */}
-      <mesh position={[0, 0.25, 0]} material={SHIP_MAT.fin} castShadow>
-        <cylinderGeometry args={[1.0, 1.08, 0.5, 20]} />
+      <mesh position={[0, 0.22, 0]} material={SHIP_MAT.fin} castShadow>
+        <cylinderGeometry args={[1.02, 1.1, 0.45, 20]} />
       </mesh>
-      {/* main tank barrel */}
+      {/* three engine bells in a triangle */}
+      {(
+        [
+          [0, 0.28],
+          [-0.32, -0.2],
+          [0.32, -0.2],
+        ] as const
+      ).map(([ex, ez]) => (
+        <mesh key={`bell-${ex}-${ez}`} position={[ex, 0.04, ez]} material={SHIP_MAT.tile} castShadow>
+          <cylinderGeometry args={[0.22, 0.13, 0.42, 10]} />
+        </mesh>
+      ))}
       <mesh position={[0, 2.9, 0]} material={SHIP_MAT.hull} castShadow receiveShadow>
-        <cylinderGeometry args={[0.85, 0.85, 4.8, 20]} />
+        <cylinderGeometry args={[0.85, 0.85, 4.8, 22]} />
       </mesh>
-      {/* nose cone + cap */}
+      {/* darker heat-shield belly strip facing the camera-ish +z */}
+      <mesh position={[0, 2.4, 0.72]} material={SHIP_MAT.tile}>
+        <boxGeometry args={[0.55, 3.4, 0.06]} />
+      </mesh>
+      <mesh position={[0, 1.4, 0]} material={SHIP_MAT.tile}>
+        <cylinderGeometry args={[0.87, 0.87, 0.18, 22]} />
+      </mesh>
+      <mesh position={[0, 4.4, 0]} material={SHIP_MAT.tile}>
+        <cylinderGeometry args={[0.87, 0.87, 0.14, 22]} />
+      </mesh>
       <mesh position={[0, 6.35, 0]} material={SHIP_MAT.nose} castShadow>
         <cylinderGeometry args={[0.16, 0.85, 2.1, 20]} />
       </mesh>
       <mesh position={[0, 7.42, 0]} material={SHIP_MAT.nose}>
         <sphereGeometry args={[0.16, 12, 8]} />
       </mesh>
-      {/* crew window band near the nose */}
       <mesh position={[0, 5.15, 0.78]} material={SHIP_MAT.windowBand}>
         <boxGeometry args={[0.55, 0.18, 0.18]} />
       </mesh>
-      {/* aft flaps */}
+      <mesh position={[0, 5.42, 0.76]} material={SHIP_MAT.windowBand}>
+        <boxGeometry args={[0.38, 0.12, 0.14]} />
+      </mesh>
       <mesh position={[1.0, 1.3, 0]} rotation={[0, 0, -0.16]} material={SHIP_MAT.fin} castShadow>
         <boxGeometry args={[0.5, 1.9, 0.14]} />
       </mesh>
       <mesh position={[-1.0, 1.3, 0]} rotation={[0, 0, 0.16]} material={SHIP_MAT.fin} castShadow>
         <boxGeometry args={[0.5, 1.9, 0.14]} />
       </mesh>
-      {/* forward canards */}
       <mesh position={[0.82, 5.9, 0]} rotation={[0, 0, -0.2]} material={SHIP_MAT.fin} castShadow>
         <boxGeometry args={[0.4, 1.1, 0.12]} />
       </mesh>
       <mesh position={[-0.82, 5.9, 0]} rotation={[0, 0, 0.2]} material={SHIP_MAT.fin} castShadow>
         <boxGeometry args={[0.4, 1.1, 0.12]} />
       </mesh>
-      {/* landing burn plume: apex at the engines, flaring downward */}
+      <group ref={hinges}>
+        {[0, 1, 2].map((i) => (
+          <group key={`leg-${i}`} rotation={[0, (i * Math.PI * 2) / 3, 0]}>
+            <group position={[0.88, 0.85, 0]} rotation={[0, 0, 0.58]}>
+              <mesh position={[0.72, 0, 0]} material={SHIP_MAT.fin} castShadow>
+                <boxGeometry args={[1.45, 0.1, 0.12]} />
+              </mesh>
+              <mesh position={[1.42, -0.08, 0]} material={SHIP_MAT.tile} castShadow>
+                <boxGeometry args={[0.38, 0.08, 0.28]} />
+              </mesh>
+            </group>
+          </group>
+        ))}
+      </group>
       <mesh ref={plume} position={[0, -1.35, 0]} material={SHIP_MAT.plume} visible={false}>
-        <coneGeometry args={[0.6, 2.8, 16]} />
+        <coneGeometry args={[0.55, 2.8, 16]} />
+      </mesh>
+      <mesh ref={plumeOuter} position={[0, -1.7, 0]} material={SHIP_MAT.plumeOuter} visible={false}>
+        <coneGeometry args={[0.95, 3.6, 14]} />
+      </mesh>
+      <mesh ref={kick} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.1, 0]} visible={false}>
+        <ringGeometry args={[0.7, 2.8, 28]} />
+        <meshBasicMaterial
+          ref={kickMat}
+          color="#d08347"
+          transparent
+          opacity={0}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
       </mesh>
       <pointLight ref={engineLight} position={[0, -0.8, 0]} color="#ffb36b" distance={18} intensity={0} />
     </group>
@@ -136,9 +239,6 @@ function arrivalTargetY(phase: number, stagger: number): number {
 export function Starships(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
   const scrubSol = useSimStore((s) => s.scrubSol);
-  // Scrubbing the timeline replays traffic: reconstruct the fleet as of the
-  // viewed sol instead of the live one. Ledgers are append-only, so history
-  // is just "ignore windows that had not opened yet".
   const viewSol = scrubSol ?? sim.sol;
   const viewWindow = Math.floor(viewSol / SOLS_PER_SYNODIC_WINDOW);
   const phase = viewSol - viewWindow * SOLS_PER_SYNODIC_WINDOW;
@@ -149,7 +249,7 @@ export function Starships(): React.ReactElement {
   let departedThisWindow = 0;
   for (const ledger of sim.ledgers) {
     if (ledger.window > viewWindow) {
-      continue; // this window had not opened yet at the viewed sol
+      continue;
     }
     landedTotal += ledger.shipsLanded;
     if (ledger.window < viewWindow) {
@@ -157,8 +257,6 @@ export function Starships(): React.ReactElement {
     } else {
       landedThisWindow = ledger.shipsLanded;
       departedThisWindow = ledger.shipsDeparted;
-      // This window's departure burn happens at phase 600; before that the
-      // ships are still on the pads even if they left later in real history.
       if (phase >= DEPARTURE_OFFSET_SOLS) {
         departedTotal += ledger.shipsDeparted;
       }
@@ -169,13 +267,11 @@ export function Starships(): React.ReactElement {
   const ships: React.ReactElement[] = [];
   for (let i = 0; i < groundShips; i += 1) {
     const [x, z] = slotPosition(i);
-    // The newest arrivals occupy the highest slots and are still descending.
     const arrivalRank = i - (groundShips - landedThisWindow);
     const targetY = arrivalRank >= 0 ? arrivalTargetY(phase, arrivalRank * 5) : 0;
     ships.push(<Starship key={`ship-${i}`} x={x} z={z} targetY={targetY} />);
   }
 
-  // A fueled ship climbing out for Earth, shortly after the departure burn sol.
   const sinceDeparture = phase - DEPARTURE_OFFSET_SOLS;
   if (departedThisWindow > 0 && sinceDeparture >= 0 && sinceDeparture <= 20) {
     const [x, z] = slotPosition(groundShips);

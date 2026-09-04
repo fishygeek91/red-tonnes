@@ -43,6 +43,7 @@ const PLUME_VERTEX = /* glsl */ `
 `;
 const PLUME_FRAGMENT = /* glsl */ `
   uniform float time;
+  uniform float gain;
   uniform vec3 coreColor;
   uniform vec3 tipColor;
   varying vec2 vUv;
@@ -63,7 +64,7 @@ const PLUME_FRAGMENT = /* glsl */ `
   void main() {
     float along = vUv.y;
     float n = noise(vec2(vUv.x * 8.0, vUv.y * 5.0 - time * 6.2));
-    float core = smoothstep(1.0, 0.12, along) * (0.55 + 0.45 * n);
+    float core = smoothstep(1.0, 0.12, along) * (0.55 + 0.45 * n) * gain;
     vec3 col = mix(coreColor, tipColor, 1.0 - along);
     float alpha = core;
     gl_FragColor = vec4(col * alpha, alpha);
@@ -73,19 +74,31 @@ const PLUME_FRAGMENT = /* glsl */ `
 /** Typed plume uniforms. */
 interface PlumeUniforms {
   readonly time: { value: number };
+  readonly gain: { value: number };
   readonly coreColor: { value: THREE.Color };
   readonly tipColor: { value: THREE.Color };
   [uniform: string]: { value: unknown };
 }
 
-const PLUME_UNIFORMS: PlumeUniforms = {
-  time: { value: 0 },
-  coreColor: { value: new THREE.Color('#ffb36b') },
-  tipColor: { value: new THREE.Color('#ff7a2a') },
-};
+/**
+ * Build additive plume uniforms. Inner and outer cones share time via the
+ * frame loop, but gain keeps the sheath from matching the core.
+ * @param gain - Opacity scale, 1 = core, less = sheath.
+ */
+function plumeUniforms(gain: number): PlumeUniforms {
+  return {
+    time: { value: 0 },
+    gain: { value: gain },
+    coreColor: { value: new THREE.Color('#ffb36b') },
+    tipColor: { value: new THREE.Color('#ff7a2a') },
+  };
+}
+
+const PLUME_CORE_UNIFORMS = plumeUniforms(1);
+const PLUME_SHEATH_UNIFORMS = plumeUniforms(0.38);
 
 const PLUME_MAT = new THREE.ShaderMaterial({
-  uniforms: PLUME_UNIFORMS,
+  uniforms: PLUME_CORE_UNIFORMS,
   vertexShader: PLUME_VERTEX,
   fragmentShader: PLUME_FRAGMENT,
   transparent: true,
@@ -96,7 +109,7 @@ const PLUME_MAT = new THREE.ShaderMaterial({
 });
 
 const PLUME_OUTER_MAT = new THREE.ShaderMaterial({
-  uniforms: PLUME_UNIFORMS,
+  uniforms: PLUME_SHEATH_UNIFORMS,
   vertexShader: PLUME_VERTEX,
   fragmentShader: PLUME_FRAGMENT,
   transparent: true,
@@ -183,7 +196,8 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
     }
     g.position.y += (props.targetY - g.position.y) * Math.min(1, delta * 1.6);
     const airborne = g.position.y > 0.4;
-    PLUME_UNIFORMS.time.value = state.clock.elapsedTime;
+    PLUME_CORE_UNIFORMS.time.value = state.clock.elapsedTime;
+    PLUME_SHEATH_UNIFORMS.time.value = state.clock.elapsedTime;
     if (plume.current) {
       plume.current.visible = airborne;
       const flicker = 1 + 0.18 * Math.sin(state.clock.elapsedTime * 31 + props.x);

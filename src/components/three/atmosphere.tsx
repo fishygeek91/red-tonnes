@@ -64,7 +64,7 @@ const SKY_FRAGMENT = /* glsl */ `
     float cosSun = max(dot(dir, sunDir), 0.0);
     sky += sunColor * pow(cosSun, mix(26.0, 6.0, haze)) * mix(0.55, 0.2, haze);
     float disc = smoothstep(mix(0.99993, 0.9994, haze), 0.99997, cosSun);
-    sky += sunColor * disc * mix(2.6, 0.4, haze);
+    sky += sunColor * disc * mix(3.4, 0.35, haze);
     float stars = step(0.9965, hash13(floor(dir * 92.0))) * pow(h, 2.2) * (1.0 - haze);
     sky += vec3(0.95, 0.88, 0.8) * stars * 0.65;
     vec3 spaceCol = vec3(0.027, 0.024, 0.039);
@@ -72,6 +72,11 @@ const SKY_FRAGMENT = /* glsl */ `
     gl_FragColor = vec4(sky, 1.0);
   }
 `;
+
+/** Scratch colors so the sky can chase a continuous storm mix without allocating. */
+const SKY_TOP = new THREE.Color();
+const SKY_HORIZON = new THREE.Color();
+const SKY_SUN = new THREE.Color();
 
 /** Sky palette endpoints, lerped by live daylight each frame. */
 export const SKY_CLEAR = {
@@ -112,12 +117,12 @@ function SkyDome(props: { daylight: number }): React.ReactElement {
   useFrame((_, delta) => {
     const storminess = 1 - props.daylight;
     const k = clamp(delta * 1.5, 0, 1);
-    uniforms.topColor.value.lerp(storminess > 0.5 ? SKY_STORM.top : SKY_CLEAR.top, k);
-    uniforms.horizonColor.value.lerp(
-      storminess > 0.5 ? SKY_STORM.horizon : SKY_CLEAR.horizon,
-      k,
-    );
-    uniforms.sunColor.value.lerp(storminess > 0.5 ? SKY_STORM.sun : SKY_CLEAR.sun, k);
+    SKY_TOP.copy(SKY_CLEAR.top).lerp(SKY_STORM.top, storminess);
+    SKY_HORIZON.copy(SKY_CLEAR.horizon).lerp(SKY_STORM.horizon, storminess);
+    SKY_SUN.copy(SKY_CLEAR.sun).lerp(SKY_STORM.sun, storminess);
+    uniforms.topColor.value.lerp(SKY_TOP, k);
+    uniforms.horizonColor.value.lerp(SKY_HORIZON, k);
+    uniforms.sunColor.value.lerp(SKY_SUN, k);
     // eslint-disable-next-line react-hooks/immutability -- three.js uniforms are mutated in the frame loop by design
     uniforms.haze.value += (storminess - uniforms.haze.value) * k;
     uniforms.fade.value = 1 - ORBIT.space;
@@ -438,13 +443,13 @@ export function DustRig(): React.ReactElement {
     const k = Math.min(1, delta * 1.5);
     coat.current += (1 - daylight - coat.current) * k;
     applyDustCoat(coat.current);
-    state.gl.toneMappingExposure = 0.58 + daylight * 0.52;
-    state.scene.environmentIntensity = (0.18 + daylight * 0.28) * (1 - space * 0.45);
+    state.gl.toneMappingExposure = 0.46 + daylight * 0.64;
+    state.scene.environmentIntensity = (0.14 + daylight * 0.32) * (1 - space * 0.45);
     if (hemi.current) {
       hemi.current.intensity = (0.42 + daylight * 0.55) * (1 - space * 0.72);
     }
     if (cityFill.current) {
-      cityFill.current.intensity = 1.7 * (1 - space);
+      cityFill.current.intensity = 1.7 * (1 - space) * (0.2 + daylight * 0.8);
     }
     if (spaceSun.current) {
       spaceSun.current.intensity = 0.15 + space * 2.4;

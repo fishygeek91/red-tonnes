@@ -239,7 +239,7 @@ export function TimeScrubber(props: { variant?: 'bar' | 'panel' }): React.ReactE
               ? 'border-[var(--line)] text-[var(--text)]'
               : 'border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)] hover:border-[var(--rust)]'
         }`}
-        title="Desktop WebGL quality. Phones stay on the lite path. High: transmission, AO, 2k shadows. Medium: bloom without AO. Low: no shadows."
+        title="Desktop WebGL quality. Phones stay on the lite path. High: physical film, AO, 2k shadows. Medium: bloom without AO. Low: no shadows."
       >
         GFX {graphicsQuality}
       </button>

@@ -303,7 +303,7 @@ function SceneFX(props: { tier: GraphicsQuality; city: boolean }): React.ReactEl
   return (
     <EffectComposer multisampling={high ? 4 : 0}>
       {high ? <N8AO aoRadius={2.2} intensity={1.05} quality="medium" halfRes color="#2a140c" /> : null}
-      {rich ? <Bloom luminanceThreshold={0.88} mipmapBlur intensity={0.48} radius={0.55} /> : null}
+      {rich ? <Bloom luminanceThreshold={0.82} mipmapBlur intensity={0.5} radius={0.52} /> : null}
       {rich ? <SMAA /> : null}
     </EffectComposer>
   );

@@ -301,12 +301,16 @@ export const MAT = {
   waterDome: new THREE.MeshPhysicalMaterial({
     color: '#7cc7e8',
     roughness: 0.12,
-    metalness: 0.05,
-    transmission: 0.55,
+    metalness: 0.08,
+    transparent: true,
+    opacity: 0.52,
+    depthWrite: false,
+    // Transmission needs a scene buffer the EffectComposer does not provide.
+    transmission: 0,
     thickness: 1.2,
     ior: 1.33,
-    clearcoat: 0.3,
-    clearcoatRoughness: 0.2,
+    clearcoat: 0.55,
+    clearcoatRoughness: 0.15,
   }),
   berm: new THREE.MeshStandardMaterial({ color: '#54291a', roughness: 1 }),
   rock: new THREE.MeshStandardMaterial({ color: '#5f2f1c', roughness: 1, flatShading: true }),
@@ -387,6 +391,7 @@ const COAT: readonly CoatEntry[] = [
   coatEntry(MAT.deck),
   coatEntry(MAT.drum),
   coatEntry(MAT.ch4Tank, 0.45),
+  coatEntry(MAT.iceTank),
   coatEntry(MAT.intake),
   coatEntry(MAT.darkGlass),
   coatEntry(MAT.digester),
@@ -405,9 +410,9 @@ export function applyDustCoat(amount: number): void {
     if (!e) {
       continue;
     }
-    e.mat.color.copy(e.color).lerp(DUST, a * 0.62);
-    e.mat.roughness = e.roughness + (1 - e.roughness) * a * 0.72;
-    e.mat.metalness = e.metalness * (1 - a * 0.78);
+    e.mat.color.copy(e.color).lerp(DUST, a * 0.78);
+    e.mat.roughness = e.roughness + (1 - e.roughness) * a * 0.8;
+    e.mat.metalness = e.metalness * (1 - a * 0.85);
     if (e.clearcoat !== null && e.mat instanceof THREE.MeshPhysicalMaterial) {
       e.mat.clearcoat = e.clearcoat * (1 - a * 0.85);
     }
@@ -452,19 +457,21 @@ export function bindCanvasMaps(): void {
     MAT.rustSteel.normalScale = new THREE.Vector2(0.45, 0.45);
     MAT.ch4Tank.normalMap = steelN;
     MAT.ch4Tank.normalScale = new THREE.Vector2(0.22, 0.22);
+    MAT.ch4Tank.needsUpdate = true;
   }
   if (steelR) {
     steelR.repeat.set(4, 2);
     MAT.steel.roughnessMap = steelR;
     MAT.intake.roughnessMap = steelR;
+    MAT.ch4Tank.roughnessMap = steelR;
   }
   MAT.steel.needsUpdate = true;
   MAT.rustSteel.needsUpdate = true;
   const gravel = buildGravelNormal();
   if (gravel) {
-    gravel.repeat.set(48, 48);
+    gravel.repeat.set(28, 28);
     MAT.regolith.normalMap = gravel;
-    MAT.regolith.normalScale = new THREE.Vector2(0.7, 0.7);
+    MAT.regolith.normalScale = new THREE.Vector2(0.58, 0.58);
     MAT.regolith.needsUpdate = true;
   }
   mapsBound = true;

@@ -154,7 +154,8 @@ const ATMO_FRAGMENT = /* glsl */ `
     float sunFacing = smoothstep(-0.2, 0.5, dot(n, sunDir));
     float night = 0.18 + 0.82 * sunFacing;
     vec3 col = mix(glowColor, vec3(0.55, 0.28, 0.16), dust);
-    gl_FragColor = vec4(col * fresnel * night * 2.05 * strength, 1.0);
+    float glow = fresnel * night * mix(1.55, 0.95, dust) * strength;
+    gl_FragColor = vec4(col * glow, 1.0);
   }
 `;
 
@@ -277,7 +278,7 @@ export function MarsBody(props: MarsBodyProps): React.ReactElement {
           <meshStandardMaterial
             map={maps.color}
             bumpMap={maps.bump}
-            bumpScale={radius > 10 ? 12 : 0.04}
+            bumpScale={radius > 10 ? 2.4 : 0.045}
             roughness={0.92}
             metalness={0}
           />

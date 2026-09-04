@@ -101,15 +101,29 @@ function InstancedSolarField(props: { count: number }): React.ReactElement | nul
   }
   return (
     <group>
-      <instancedMesh ref={frameRef} args={[frameGeo, MAT.steel, props.count]} />
+      <instancedMesh
+        ref={frameRef}
+        args={[frameGeo, MAT.steel, props.count]}
+        frustumCulled={false}
+      />
       <instancedMesh
         ref={cellRef}
         args={[cellGeo, MAT.solar, props.count]}
         castShadow
         receiveShadow
+        frustumCulled={false}
       />
-      <instancedMesh ref={postRef} args={[postGeo, MAT.steel, props.count]} castShadow />
-      <instancedMesh ref={boxRef} args={[boxGeo, MAT.rustSteel, props.count]} />
+      <instancedMesh
+        ref={postRef}
+        args={[postGeo, MAT.steel, props.count]}
+        castShadow
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={boxRef}
+        args={[boxGeo, MAT.rustSteel, props.count]}
+        frustumCulled={false}
+      />
     </group>
   );
 }
@@ -309,7 +323,7 @@ function CryoFarm(props: { ch4Fill: number; loxFill: number; waterFill: number }
           <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
         </mesh>
       </group>
-      <mesh position={[7.2, 1.2, 0]} material={MAT.waterDome} castShadow receiveShadow>
+      <mesh position={[7.2, 1.2, 0]} material={MAT.waterDome} receiveShadow>
         <sphereGeometry args={[1.3 * (0.6 + props.waterFill * 0.4), 24, 24]} />
       </mesh>
       <mesh position={[1.8, 0.35, 1.8]} material={MAT.steel} castShadow>
@@ -441,9 +455,13 @@ function GreenhouseStreet(props: {
   const high = tier === 'high';
   useFrame(() => {
     if (shell.current) {
-      shell.current.emissiveIntensity = 0.08 + props.glow * (props.rigid ? 1.1 : 1.35);
+      // The shell is a window, not a lamp — crops carry the street's glow.
+      // Medium/low film is more opaque, so it keeps a little more of its own light.
+      shell.current.emissiveIntensity = high
+        ? 0.03 + props.glow * 0.18
+        : 0.05 + props.glow * 0.35;
     }
-    MAT.plant.emissiveIntensity = 0.22 + props.glow * 1.25;
+    MAT.plant.emissiveIntensity = 0.28 + props.glow * 1.15;
   });
   const ribs: React.ReactElement[] = [];
   const step = props.rigid ? 1.6 : 2.1;
@@ -456,20 +474,25 @@ function GreenhouseStreet(props: {
   }
   return (
     <group position={props.position}>
-      <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
+      <mesh rotation={[0, 0, Math.PI / 2]}>
         <cylinderGeometry args={[1.1, 1.1, props.length, 24, 1, false, 0, Math.PI]} />
         {high ? (
           <meshPhysicalMaterial
             ref={shell}
             color={props.rigid ? '#2a3834' : '#2a3c2c'}
-            roughness={props.rigid ? 0.08 : 0.28}
+            roughness={props.rigid ? 0.08 : 0.32}
             metalness={0}
-            transmission={props.rigid ? 0.45 : 0.72}
-            thickness={0.4}
-            ior={props.rigid ? 1.5 : 1.38}
+            transparent
+            opacity={props.rigid ? 0.7 : 0.5}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            // N8AO + EffectComposer has no transmission buffer — physical film, not a black shell.
+            transmission={0}
+            clearcoat={props.rigid ? 0.42 : 0.08}
+            clearcoatRoughness={props.rigid ? 0.1 : 0.55}
             attenuationColor="#3d9a4a"
             emissive="#59c96a"
-            emissiveIntensity={0.1}
+            emissiveIntensity={0.05}
           />
         ) : (
           <meshStandardMaterial
@@ -479,6 +502,7 @@ function GreenhouseStreet(props: {
             metalness={props.rigid ? 0.15 : 0}
             transparent
             opacity={props.rigid ? 0.82 : 0.68}
+            depthWrite={false}
             emissive="#59c96a"
             emissiveIntensity={0.1}
           />
@@ -665,7 +689,7 @@ export function Settlement(): React.ReactElement {
       </Pick>
 
       <Pick id="solar">
-        <InstancedSolarField count={st.solar * 3} />
+        <InstancedSolarField key={`sol-${st.solar * 3}`} count={st.solar * 3} />
       </Pick>
 
       <Pick id="nuclear">

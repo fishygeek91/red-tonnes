@@ -13,8 +13,22 @@ import type { Site } from '../../lib/sites';
 import { SITES } from '../../lib/sites';
 import { fbm, noise2 } from './regolith';
 
-/** Build the hypsometric Mars texture once per session. */
-export function buildMarsTexture(): THREE.CanvasTexture | null {
+/** Color + linear bump painted once per session (sidebar + city share it). */
+export interface MarsMaps {
+  readonly color: THREE.CanvasTexture;
+  readonly bump: THREE.CanvasTexture;
+}
+
+let marsMaps: MarsMaps | null = null;
+
+/**
+ * Paint the hypsometric albedo and a linear bump map once, then reuse.
+ * @returns Shared maps, or null during SSR / missing 2D context.
+ */
+export function getMarsMaps(): MarsMaps | null {
+  if (marsMaps) {
+    return marsMaps;
+  }
   if (typeof document === 'undefined') {
     return null;
   }
@@ -23,11 +37,16 @@ export function buildMarsTexture(): THREE.CanvasTexture | null {
   const colorCanvas = document.createElement('canvas');
   colorCanvas.width = w;
   colorCanvas.height = h;
+  const bumpCanvas = document.createElement('canvas');
+  bumpCanvas.width = w;
+  bumpCanvas.height = h;
   const colorCtx = colorCanvas.getContext('2d');
-  if (!colorCtx) {
+  const bumpCtx = bumpCanvas.getContext('2d');
+  if (!colorCtx || !bumpCtx) {
     return null;
   }
   const colorImg = colorCtx.createImageData(w, h);
+  const bumpImg = bumpCtx.createImageData(w, h);
   for (let y = 0; y < h; y += 1) {
     const lat = 90 - (y / h) * 180;
     for (let x = 0; x < w; x += 1) {
@@ -74,13 +93,29 @@ export function buildMarsTexture(): THREE.CanvasTexture | null {
       colorImg.data[i + 1] = g;
       colorImg.data[i + 2] = b;
       colorImg.data[i + 3] = 255;
+      const bump = Math.min(255, Math.max(0, t * 255));
+      bumpImg.data[i] = bump;
+      bumpImg.data[i + 1] = bump;
+      bumpImg.data[i + 2] = bump;
+      bumpImg.data[i + 3] = 255;
     }
   }
   colorCtx.putImageData(colorImg, 0, 0);
-  const map = new THREE.CanvasTexture(colorCanvas);
-  map.colorSpace = THREE.SRGBColorSpace;
-  map.anisotropy = 4;
-  return map;
+  bumpCtx.putImageData(bumpImg, 0, 0);
+  const color = new THREE.CanvasTexture(colorCanvas);
+  color.colorSpace = THREE.SRGBColorSpace;
+  color.anisotropy = 4;
+  const bump = new THREE.CanvasTexture(bumpCanvas);
+  bump.colorSpace = THREE.LinearSRGBColorSpace;
+  bump.anisotropy = 4;
+  marsMaps = { color, bump };
+  return marsMaps;
+}
+
+/** Build the hypsometric Mars albedo once per session (shared with bump). */
+export function buildMarsTexture(): THREE.CanvasTexture | null {
+  const maps = getMarsMaps();
+  return maps ? maps.color : null;
 }
 
 /** Convert lat/lon (degrees) to a position on a sphere of the given radius. */
@@ -94,21 +129,32 @@ export function latLonToVec3(latDeg: number, lonDeg: number, radius: number): TH
   );
 }
 
-/** Fresnel-style limb glow: brightest at the planet edge, fading outward. */
+/** View-dependent limb with a sun terminator and τ-tinted dust. */
 const ATMO_VERTEX = /* glsl */ `
-  varying vec3 vNormal;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDir;
   void main() {
-    vNormal = normalize(normalMatrix * normal);
+    vec4 world = modelMatrix * vec4(position, 1.0);
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vViewDir = cameraPosition - world.xyz;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 const ATMO_FRAGMENT = /* glsl */ `
-  varying vec3 vNormal;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDir;
   uniform vec3 glowColor;
+  uniform vec3 sunDir;
   uniform float strength;
+  uniform float dust;
   void main() {
-    float intensity = pow(max(0.22 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 0.0), 4.0);
-    gl_FragColor = vec4(glowColor, 1.0) * intensity * 2.2 * strength;
+    vec3 n = normalize(vWorldNormal);
+    vec3 v = normalize(vViewDir);
+    float fresnel = pow(1.0 - abs(dot(n, v)), 2.8);
+    float sunFacing = smoothstep(-0.2, 0.5, dot(n, sunDir));
+    float night = 0.18 + 0.82 * sunFacing;
+    vec3 col = mix(glowColor, vec3(0.55, 0.28, 0.16), dust);
+    gl_FragColor = vec4(col * fresnel * night * 2.05 * strength, 1.0);
   }
 `;
 
@@ -132,6 +178,10 @@ export interface MarsBodyProps {
   readonly labelDistanceFactor?: number;
   /** Atmosphere rim strength 0–1. */
   readonly atmoStrength?: number;
+  /** Dust optical-depth mix 0–1 for the limb tint (city orbit). */
+  readonly dustAmount?: number;
+  /** World-space sun direction for the terminator. */
+  readonly sunDir?: THREE.Vector3;
   /** Currently selected run site. */
   readonly activeSiteId: string;
   /** Site whose dossier is open, if any. */
@@ -174,22 +224,37 @@ export function siteOutward(site: Site, pole: THREE.Quaternion): THREE.Vector3 {
   return tiltedSiteDir(site).applyQuaternion(pole);
 }
 
+/** Default sidebar sun so the spinner has a terminator without city SUN_DIR. */
+const SIDEBAR_SUN = new THREE.Vector3(0.7, 0.45, 0.4).normalize();
+
+/** Typed atmosphere uniforms. */
+interface AtmoUniforms {
+  readonly glowColor: { value: THREE.Color };
+  readonly sunDir: { value: THREE.Vector3 };
+  readonly strength: { value: number };
+  readonly dust: { value: number };
+  [uniform: string]: { value: unknown };
+}
+
 /** The globe mesh, atmosphere, and site pins. */
 export function MarsBody(props: MarsBodyProps): React.ReactElement {
   const radius = props.radius ?? 1;
   const showPins = props.showPins ?? true;
   const showAtmosphere = props.showAtmosphere ?? true;
-  const texture = useMemo(() => buildMarsTexture(), []);
+  const maps = useMemo(() => getMarsMaps(), []);
   const group = useRef<THREE.Group>(null);
   const marker = useRef<THREE.Group>(null);
-  const atmoUniforms = useMemo(
+  const atmoUniforms = useMemo<AtmoUniforms>(
     () => ({
       glowColor: { value: new THREE.Color('#e08a52') },
+      sunDir: { value: SIDEBAR_SUN.clone() },
       strength: { value: 1 },
+      dust: { value: 0 },
     }),
     [],
   );
 
+  /* eslint-disable react-hooks/immutability -- three.js uniforms mutate in the frame loop */
   useFrame((state, delta) => {
     if (props.autoSpin && group.current) {
       group.current.rotation.y += delta * 0.06;
@@ -198,14 +263,24 @@ export function MarsBody(props: MarsBodyProps): React.ReactElement {
       const pulse = 1 + 0.35 * Math.sin(state.clock.elapsedTime * 3);
       marker.current.scale.setScalar(pulse);
     }
+    atmoUniforms.strength.value = props.atmoStrength ?? 1;
+    atmoUniforms.dust.value = props.dustAmount ?? 0;
+    atmoUniforms.sunDir.value.copy(props.sunDir ?? SIDEBAR_SUN);
   });
+  /* eslint-enable react-hooks/immutability */
 
   return (
     <group ref={group} rotation={[0, 0, -0.22]}>
       <mesh>
         <sphereGeometry args={[radius, 96, 96]} />
-        {texture ? (
-          <meshStandardMaterial map={texture} roughness={0.95} metalness={0} />
+        {maps ? (
+          <meshStandardMaterial
+            map={maps.color}
+            bumpMap={maps.bump}
+            bumpScale={radius > 10 ? 12 : 0.04}
+            roughness={0.92}
+            metalness={0}
+          />
         ) : (
           <meshStandardMaterial color="#8a3c1e" roughness={0.95} />
         )}
@@ -217,6 +292,7 @@ export function MarsBody(props: MarsBodyProps): React.ReactElement {
             side={THREE.BackSide}
             transparent
             depthWrite={false}
+            toneMapped={false}
             blending={THREE.AdditiveBlending}
             uniforms={atmoUniforms}
             vertexShader={ATMO_VERTEX}

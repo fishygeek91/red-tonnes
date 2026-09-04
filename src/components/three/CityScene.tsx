@@ -14,15 +14,17 @@
 
 import { OrbitControls, Stars } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Bloom, EffectComposer, N8AO } from '@react-three/postprocessing';
+import { Bloom, EffectComposer, N8AO, SMAA } from '@react-three/postprocessing';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { useGraphicsTier } from '../../hooks/useGraphicsTier';
 import { useNarrowViewport } from '../../hooks/useNarrowViewport';
 import { rngFromSeed, rngNext, type RngState } from '../../lib/rng';
-import { getSite, SITES, type Site } from '../../lib/sites';
+import { getSite, opticalDepthAtSol, SITES, type Site } from '../../lib/sites';
 import { inspect } from '../../lib/sim/inspect';
+import { sunlightFraction } from '../../lib/sim/step';
 import { clamp } from '../../lib/types';
-import { useSimStore } from '../../store/useSimStore';
+import { useSimStore, type GraphicsQuality } from '../../store/useSimStore';
 import { DustRig } from './atmosphere';
 import { MAT } from './materials';
 import { faceSiteToUp, MarsBody, siteOutward } from './MarsBody';
@@ -43,7 +45,7 @@ import {
   spaceFromZoom,
   targetBlendFromZoom,
 } from './orbit';
-import { buildTerrainGeometry, siteLook, terrainHeight } from './regolith';
+import { buildTerrainGeometry, siteLook, SUN_DIR, terrainHeight } from './regolith';
 import { Pick } from './Pick';
 import { Settlement } from './Settlement';
 import { Starships } from './Starships';
@@ -114,9 +116,7 @@ function Terrain(): React.ReactElement {
   const siteId = useSimStore((s) => s.sim.siteId);
   const geometry = useMemo(() => buildTerrainGeometry(siteLook(siteId)), [siteId]);
   return (
-    <mesh geometry={geometry} receiveShadow>
-      <meshStandardMaterial vertexColors roughness={1} metalness={0} />
-    </mesh>
+    <mesh geometry={geometry} receiveShadow material={MAT.regolith} />
   );
 }
 
@@ -295,17 +295,16 @@ function Rover(): React.ReactElement {
 /**
  * Always present through a composer. PMREM / orbit camera writes can leave
  * the default framebuffer unbound; without a composer the canvas stays black
- * on phones and in planet view. Rich passes stay desktop-city only.
+ * on phones and in planet view. Rich passes stay city + medium/high only.
  */
-function SceneFX(props: { rich: boolean }): React.ReactElement {
+function SceneFX(props: { tier: GraphicsQuality; city: boolean }): React.ReactElement {
+  const rich = props.city && props.tier !== 'low';
+  const high = props.city && props.tier === 'high';
   return (
-    <EffectComposer multisampling={props.rich ? 4 : 0}>
-      {props.rich ? (
-        <>
-          <N8AO aoRadius={2.2} intensity={1.05} quality="medium" halfRes color="#2a140c" />
-          <Bloom luminanceThreshold={0.84} mipmapBlur intensity={0.58} radius={0.6} />
-        </>
-      ) : null}
+    <EffectComposer multisampling={high ? 4 : 0}>
+      {high ? <N8AO aoRadius={2.2} intensity={1.05} quality="medium" halfRes color="#2a140c" /> : null}
+      {rich ? <Bloom luminanceThreshold={0.88} mipmapBlur intensity={0.48} radius={0.55} /> : null}
+      {rich ? <SMAA /> : null}
     </EffectComposer>
   );
 }
@@ -571,7 +570,9 @@ export function CityScene(): React.ReactElement {
   const setFocusId = useSimStore((s) => s.setGlobeFocus);
   const viewIntent = useSimStore((s) => s.viewIntent);
   const setViewIntent = useSimStore((s) => s.setViewIntent);
-  const lite = useNarrowViewport();
+  const scrubSol = useSimStore((s) => s.scrubSol);
+  const narrow = useNarrowViewport();
+  const tier = useGraphicsTier();
   const [band, setBand] = useState<ViewBand>('city');
   const tGoal = useRef(CITY_T);
   const lookDir = useRef<THREE.Vector3 | null>(null);
@@ -580,6 +581,19 @@ export function CityScene(): React.ReactElement {
   const focusSite = focusId ? getSite(focusId) : null;
   const inCity = band === 'city';
   const inOrbit = band === 'orbit';
+  const low = tier === 'low';
+  const history = useSimStore((s) => s.sim.history);
+  const siteDust = homeSite.dustFactor;
+  const orbitDust = useMemo(() => {
+    const snap =
+      history.length === 0
+        ? undefined
+        : scrubSol === null
+          ? history[history.length - 1]
+          : history[clamp(scrubSol - 1, 0, history.length - 1)];
+    const tau = snap ? snap.tau : opticalDepthAtSol(sol, false, siteDust);
+    return 1 - clamp(sunlightFraction(tau) / 0.5, 0, 1);
+  }, [history, scrubSol, sol, siteDust]);
 
   useEffect(() => {
     if (!inCity) {
@@ -625,13 +639,14 @@ export function CityScene(): React.ReactElement {
   return (
     <div className="flex-1 relative min-w-0 min-h-0">
       <Canvas
-        shadows={lite ? false : 'soft'}
-        dpr={lite ? [1, 1.5] : [1, 2]}
+        shadows={!low}
+        dpr={tier === 'high' ? [1, 2] : [1, 1.5]}
         camera={{ position: [18, 9, 20], fov: 40, near: 0.12, far: 16000 }}
-        gl={{ antialias: !lite }}
+        gl={{ antialias: !low, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1 }}
         resize={{ debounce: 0 }}
         style={{ background: '#1c0f0d' }}
         onCreated={(state) => {
+          state.gl.toneMapping = THREE.ACESFilmicToneMapping;
           const cam = state.camera;
           if (isPerspective(cam) && state.size.height > 0) {
             cam.aspect = state.size.width / state.size.height;
@@ -651,7 +666,7 @@ export function CityScene(): React.ReactElement {
           <Stars
             radius={12000}
             depth={4000}
-            count={lite ? 800 : 2800}
+            count={low ? 800 : 2800}
             factor={6}
             saturation={0}
             fade
@@ -680,6 +695,8 @@ export function CityScene(): React.ReactElement {
               pinSize={16}
               labelDistanceFactor={120}
               atmoStrength={1}
+              dustAmount={orbitDust}
+              sunDir={SUN_DIR}
               onPickSite={(s) => setFocusId(s.id)}
             />
           </group>
@@ -695,7 +712,7 @@ export function CityScene(): React.ReactElement {
           dampingFactor={0.08}
           enableZoom={false}
         />
-        <SceneFX rich={!lite && inCity} />
+        <SceneFX tier={tier} city={inCity} />
       </Canvas>
       <div className="absolute inset-0 pointer-events-none scene-vignette" />
       <button
@@ -755,7 +772,7 @@ export function CityScene(): React.ReactElement {
             ? 'click a site to land a new city · green is home'
             : band === 'climb'
               ? 'keep scrolling — the city is still below'
-              : lite
+              : narrow
                 ? 'tap a building · Planet to switch cities'
                 : 'scroll out or Planet to switch cities · click a structure for its datasheet'}
         </div>

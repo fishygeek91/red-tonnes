@@ -7,9 +7,9 @@
  */
 
 import { useFrame } from '@react-three/fiber';
-import { useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useNarrowViewport } from '../../hooks/useNarrowViewport';
+import { useGraphicsTier } from '../../hooks/useGraphicsTier';
 import { LOX_TO_CH4_RATIO } from '../../lib/constants';
 import { STRUCTURES } from '../../lib/structures';
 import { clamp, safeDiv } from '../../lib/types';
@@ -40,6 +40,80 @@ function viewSnapshot(sim: SimState, scrubSol: number | null): SolSnapshot | und
 /** Quaternion that aims a +Y panel normal at the scene sun. */
 const PANEL_AIM = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), SUN_DIR);
 
+/** Solar field grid: 6-wide rows, same as the old `Row` helper. */
+const SOLAR_ORIGIN: readonly [number, number, number] = [10, 0.55, 12];
+const SOLAR_SPACING = 2.6;
+
+/**
+ * Instanced photovoltaic field. One draw per part instead of `count` unique
+ * SolarBlocks — this is the row that grows with local output.
+ */
+function InstancedSolarField(props: { count: number }): React.ReactElement | null {
+  const frameRef = useRef<THREE.InstancedMesh>(null);
+  const cellRef = useRef<THREE.InstancedMesh>(null);
+  const postRef = useRef<THREE.InstancedMesh>(null);
+  const boxRef = useRef<THREE.InstancedMesh>(null);
+  const frameGeo = useMemo(() => new THREE.BoxGeometry(2.32, 0.04, 1.52), []);
+  const cellGeo = useMemo(() => new THREE.BoxGeometry(2.2, 0.05, 1.4), []);
+  const postGeo = useMemo(() => new THREE.CylinderGeometry(0.05, 0.06, 0.55, 6), []);
+  const boxGeo = useMemo(() => new THREE.BoxGeometry(0.18, 0.12, 0.14), []);
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    const cell = cellRef.current;
+    const post = postRef.current;
+    const box = boxRef.current;
+    if (!frame || !cell || !post || !box) {
+      return;
+    }
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3(1, 1, 1);
+    const identity = new THREE.Quaternion();
+    const local = new THREE.Vector3();
+    for (let i = 0; i < props.count; i += 1) {
+      const x = SOLAR_ORIGIN[0] + (i % 6) * SOLAR_SPACING;
+      const y = SOLAR_ORIGIN[1];
+      const z = SOLAR_ORIGIN[2] + Math.floor(i / 6) * SOLAR_SPACING;
+      local.set(0, -0.025, 0).applyQuaternion(PANEL_AIM);
+      p.set(x, y, z).add(local);
+      m.compose(p, PANEL_AIM, s);
+      frame.setMatrixAt(i, m);
+      local.set(0, 0, 0).applyQuaternion(PANEL_AIM);
+      p.set(x, y, z).add(local);
+      m.compose(p, PANEL_AIM, s);
+      cell.setMatrixAt(i, m);
+      p.set(x, y - 0.28, z);
+      m.compose(p, identity, s);
+      post.setMatrixAt(i, m);
+      p.set(x + 0.7, y - 0.08, z);
+      m.compose(p, identity, s);
+      box.setMatrixAt(i, m);
+    }
+    frame.instanceMatrix.needsUpdate = true;
+    cell.instanceMatrix.needsUpdate = true;
+    post.instanceMatrix.needsUpdate = true;
+    box.instanceMatrix.needsUpdate = true;
+  }, [props.count]);
+
+  if (props.count < 1) {
+    return null;
+  }
+  return (
+    <group>
+      <instancedMesh ref={frameRef} args={[frameGeo, MAT.steel, props.count]} />
+      <instancedMesh
+        ref={cellRef}
+        args={[cellGeo, MAT.solar, props.count]}
+        castShadow
+        receiveShadow
+      />
+      <instancedMesh ref={postRef} args={[postGeo, MAT.steel, props.count]} castShadow />
+      <instancedMesh ref={boxRef} args={[boxGeo, MAT.rustSteel, props.count]} />
+    </group>
+  );
+}
+
 /** Sintered pad with chevrons, ring, and four strobe posts. */
 function LandingPad(props: { position: [number, number, number] }): React.ReactElement {
   return (
@@ -66,28 +140,6 @@ function LandingPad(props: { position: [number, number, number] }): React.ReactE
           </group>
         );
       })}
-    </group>
-  );
-}
-
-/** One solar block: cell-mapped panel aimed at the sun, on a truss. */
-function SolarBlock(props: { position: [number, number, number] }): React.ReactElement {
-  return (
-    <group position={props.position}>
-      <group quaternion={PANEL_AIM}>
-        <mesh position={[0, -0.025, 0]} material={MAT.steel}>
-          <boxGeometry args={[2.32, 0.04, 1.52]} />
-        </mesh>
-        <mesh material={MAT.solar} castShadow receiveShadow>
-          <boxGeometry args={[2.2, 0.05, 1.4]} />
-        </mesh>
-      </group>
-      <mesh position={[0, -0.28, 0]} material={MAT.steel} castShadow>
-        <cylinderGeometry args={[0.05, 0.06, 0.55, 6]} />
-      </mesh>
-      <mesh position={[0.7, -0.08, 0]} material={MAT.rustSteel}>
-        <boxGeometry args={[0.18, 0.12, 0.14]} />
-      </mesh>
     </group>
   );
 }
@@ -257,7 +309,7 @@ function CryoFarm(props: { ch4Fill: number; loxFill: number; waterFill: number }
           <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
         </mesh>
       </group>
-      <mesh position={[7.2, 1.2, 0]} material={MAT.iceTank} castShadow receiveShadow>
+      <mesh position={[7.2, 1.2, 0]} material={MAT.waterDome} castShadow receiveShadow>
         <sphereGeometry args={[1.3 * (0.6 + props.waterFill * 0.4), 24, 24]} />
       </mesh>
       <mesh position={[1.8, 0.35, 1.8]} material={MAT.steel} castShadow>
@@ -385,7 +437,8 @@ function GreenhouseStreet(props: {
   rigid: boolean;
 }): React.ReactElement {
   const shell = useRef<THREE.MeshStandardMaterial>(null);
-  const lite = useNarrowViewport();
+  const tier = useGraphicsTier();
+  const high = tier === 'high';
   useFrame(() => {
     if (shell.current) {
       shell.current.emissiveIntensity = 0.08 + props.glow * (props.rigid ? 1.1 : 1.35);
@@ -405,16 +458,31 @@ function GreenhouseStreet(props: {
     <group position={props.position}>
       <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
         <cylinderGeometry args={[1.1, 1.1, props.length, 24, 1, false, 0, Math.PI]} />
-        <meshStandardMaterial
-          ref={shell}
-          color={props.rigid ? '#2a3834' : '#2a3c2c'}
-          roughness={props.rigid ? 0.12 : 0.22}
-          metalness={props.rigid ? 0.15 : 0}
-          transparent
-          opacity={props.rigid ? 0.82 : 0.68}
-          emissive="#59c96a"
-          emissiveIntensity={0.1}
-        />
+        {high ? (
+          <meshPhysicalMaterial
+            ref={shell}
+            color={props.rigid ? '#2a3834' : '#2a3c2c'}
+            roughness={props.rigid ? 0.08 : 0.28}
+            metalness={0}
+            transmission={props.rigid ? 0.45 : 0.72}
+            thickness={0.4}
+            ior={props.rigid ? 1.5 : 1.38}
+            attenuationColor="#3d9a4a"
+            emissive="#59c96a"
+            emissiveIntensity={0.1}
+          />
+        ) : (
+          <meshStandardMaterial
+            ref={shell}
+            color={props.rigid ? '#2a3834' : '#2a3c2c'}
+            roughness={props.rigid ? 0.12 : 0.22}
+            metalness={props.rigid ? 0.15 : 0}
+            transparent
+            opacity={props.rigid ? 0.82 : 0.68}
+            emissive="#59c96a"
+            emissiveIntensity={0.1}
+          />
+        )}
       </mesh>
       {ribs}
       <mesh position={[0, 0.06, 0.36]} material={MAT.deck}>
@@ -433,9 +501,9 @@ function GreenhouseStreet(props: {
       <mesh position={[props.length / 2 + 0.35, 0.05, 0]} rotation={[0, 0, Math.PI / 2]} material={MAT.steel} castShadow>
         <cylinderGeometry args={[0.38, 0.38, 0.55, 10]} />
       </mesh>
-      {lite ? null : (
+      {high ? (
         <pointLight color="#59c96a" intensity={props.glow * 3} distance={7} position={[0, 0.8, 0]} />
-      )}
+      ) : null}
     </group>
   );
 }
@@ -597,9 +665,7 @@ export function Settlement(): React.ReactElement {
       </Pick>
 
       <Pick id="solar">
-        <Row count={st.solar * 3} spacing={2.6} origin={[10, 0.55, 12]}>
-          {(i, pos) => <SolarBlock key={`sol-${i}`} position={pos} />}
-        </Row>
+        <InstancedSolarField count={st.solar * 3} />
       </Pick>
 
       <Pick id="nuclear">

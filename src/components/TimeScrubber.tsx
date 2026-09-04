@@ -9,7 +9,7 @@
 import { useMemo } from 'react';
 import { SOLS_PER_SYNODIC_WINDOW } from '../lib/constants';
 import { ghostSnapshotAt } from '../lib/share/ghost';
-import { SPEEDS, useSimStore } from '../store/useSimStore';
+import { nextGraphicsQuality, SPEEDS, useSimStore } from '../store/useSimStore';
 
 /** Build an SVG polyline path from history values; NaN gaps lift the pen. */
 function sparkPath(values: number[], w: number, h: number, max: number): string {
@@ -53,6 +53,8 @@ export function TimeScrubber(props: { variant?: 'bar' | 'panel' }): React.ReactE
   const setShowTrends = useSimStore((s) => s.setShowTrends);
   const audioEnabled = useSimStore((s) => s.audioEnabled);
   const setAudioEnabled = useSimStore((s) => s.setAudioEnabled);
+  const graphicsQuality = useSimStore((s) => s.graphicsQuality);
+  const setGraphicsQuality = useSimStore((s) => s.setGraphicsQuality);
 
   const h = sim.history;
   const { tauPath, fuelPath, ghostFuelPath, maxFuel } = useMemo(() => {
@@ -226,6 +228,20 @@ export function TimeScrubber(props: { variant?: 'bar' | 'panel' }): React.ReactE
         title="Procedural Mars bed — thin wind, ISRU hum, landing rumbles. No samples."
       >
         Sound
+      </button>
+      <button
+        type="button"
+        onClick={() => setGraphicsQuality(nextGraphicsQuality(graphicsQuality))}
+        className={`px-2 py-1.5 text-[10px] border uppercase tracking-widest ${
+          graphicsQuality === 'high'
+            ? 'border-[var(--rust-hot)] text-[var(--rust-hot)]'
+            : graphicsQuality === 'medium'
+              ? 'border-[var(--line)] text-[var(--text)]'
+              : 'border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)] hover:border-[var(--rust)]'
+        }`}
+        title="Desktop WebGL quality. Phones stay on the lite path. High: transmission, AO, 2k shadows. Medium: bloom without AO. Low: no shadows."
+      >
+        GFX {graphicsQuality}
       </button>
       {scrubber}
       {status}

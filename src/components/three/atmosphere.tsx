@@ -9,14 +9,14 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useNarrowViewport } from '../../hooks/useNarrowViewport';
+import { useGraphicsTier } from '../../hooks/useGraphicsTier';
 import { getSite, opticalDepthAtSol } from '../../lib/sites';
 import { rngFromSeed, rngNext, type RngState } from '../../lib/rng';
 import type { SimState, SolSnapshot } from '../../lib/sim/state';
 import { clamp } from '../../lib/types';
 import { sunlightFraction } from '../../lib/sim/step';
 import { useSimStore } from '../../store/useSimStore';
-import { bindCanvasMaps, buildDustSprite, MAT } from './materials';
+import { applyDustCoat, bindCanvasMaps, buildDustSprite, MAT } from './materials';
 import { ORBIT } from './orbit';
 import { siteLook, SUN_DIR, terrainHeight, type SiteLook } from './regolith';
 
@@ -128,6 +128,7 @@ function SkyDome(props: { daylight: number }): React.ReactElement {
       <shaderMaterial
         side={THREE.BackSide}
         depthWrite={false}
+        toneMapped={false}
         uniforms={uniforms}
         vertexShader={SKY_VERTEX}
         fragmentShader={SKY_FRAGMENT}
@@ -360,12 +361,12 @@ function Phobos(): React.ReactElement {
 }
 
 /**
- * Directional sun. Soft 2k shadows on desktop; no shadow map on phones.
+ * Directional sun. Soft shadows on medium/high; no shadow map on low.
  * @param props.daylight - 0–1 normalized insolation after dust.
  */
 function LiteSun(props: { daylight: number }): React.ReactElement {
-  const lite = useNarrowViewport();
-  if (lite) {
+  const tier = useGraphicsTier();
+  if (tier === 'low') {
     return (
       <directionalLight
         position={[SUN_DIR.x * 90, SUN_DIR.y * 90, SUN_DIR.z * 90]}
@@ -374,13 +375,14 @@ function LiteSun(props: { daylight: number }): React.ReactElement {
       />
     );
   }
+  const map = tier === 'high' ? 2048 : 1024;
   return (
     <directionalLight
       position={[SUN_DIR.x * 90, SUN_DIR.y * 90, SUN_DIR.z * 90]}
       intensity={0.45 + props.daylight * 3.2}
       color="#ffd9b0"
       castShadow
-      shadow-mapSize={[2048, 2048]}
+      shadow-mapSize={[map, map]}
       shadow-camera-left={-70}
       shadow-camera-right={70}
       shadow-camera-top={70}
@@ -417,7 +419,7 @@ function SceneFog(props: { daylight: number }): React.ReactElement {
 export function DustRig(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
   const scrubSol = useSimStore((s) => s.scrubSol);
-  const lite = useNarrowViewport();
+  const tier = useGraphicsTier();
   const site = getSite(sim.siteId);
   const look = siteLook(sim.siteId);
   const snap = viewSnapshot(sim, scrubSol);
@@ -428,10 +430,16 @@ export function DustRig(): React.ReactElement {
   const cityFill = useRef<THREE.PointLight>(null);
   const spaceSun = useRef<THREE.DirectionalLight>(null);
   const surface = useRef<THREE.Group>(null);
-  useFrame((state) => {
+  const coat = useRef(0);
+  useFrame((state, delta) => {
     const pulse = 0.45 + 2.1 * (0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 3.4));
     MAT.beacon.emissiveIntensity = pulse;
     const space = ORBIT.space;
+    const k = Math.min(1, delta * 1.5);
+    coat.current += (1 - daylight - coat.current) * k;
+    applyDustCoat(coat.current);
+    state.gl.toneMappingExposure = 0.58 + daylight * 0.52;
+    state.scene.environmentIntensity = (0.18 + daylight * 0.28) * (1 - space * 0.45);
     if (hemi.current) {
       hemi.current.intensity = (0.42 + daylight * 0.55) * (1 - space * 0.72);
     }
@@ -462,7 +470,7 @@ export function DustRig(): React.ReactElement {
       <GroundHaze daylight={daylight} />
       <DustParticles tau={tau} />
       <group ref={surface}>
-        {lite ? null : (
+        {tier === 'low' ? null : (
           <>
             <DustDevil tau={tau} look={look} seed={11} wander={[48, 22]} />
             <DustDevil tau={tau} look={look} seed={29} wander={[-52, -28]} />

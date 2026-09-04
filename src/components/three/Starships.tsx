@@ -15,13 +15,12 @@ import * as THREE from 'three';
 import { DEPARTURE_OFFSET_SOLS, SOLS_PER_SYNODIC_WINDOW } from '../../lib/constants';
 import { clamp } from '../../lib/types';
 import { useSimStore } from '../../store/useSimStore';
-import { buildHeatTileMap } from './materials';
+import { buildHeatTileMap, buildHeatTileRoughness } from './materials';
 import { Pick } from './Pick';
 
 /** Shared ship materials (module-level: allocated once). */
 const SHIP_MAT = {
   hull: new THREE.MeshStandardMaterial({ color: '#c9ced3', roughness: 0.34, metalness: 0.55 }),
-  nose: new THREE.MeshStandardMaterial({ color: '#aeb4ba', roughness: 0.3, metalness: 0.5 }),
   fin: new THREE.MeshStandardMaterial({ color: '#3c4148', roughness: 0.48, metalness: 0.4 }),
   tile: new THREE.MeshStandardMaterial({ color: '#4a4540', roughness: 0.7, metalness: 0.15 }),
   windowBand: new THREE.MeshStandardMaterial({
@@ -30,33 +29,122 @@ const SHIP_MAT = {
     emissiveIntensity: 1.8,
     roughness: 0.4,
   }),
-  plume: new THREE.MeshBasicMaterial({
-    color: '#ffb36b',
-    transparent: true,
-    opacity: 0.82,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  }),
-  plumeOuter: new THREE.MeshBasicMaterial({
-    color: '#ff7a2a',
-    transparent: true,
-    opacity: 0.35,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  }),
 };
+
+/** Additive noise plume — authored colors, not ACES-graded twice. */
+const PLUME_VERTEX = /* glsl */ `
+  varying vec2 vUv;
+  varying vec3 vPos;
+  void main() {
+    vUv = uv;
+    vPos = position;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const PLUME_FRAGMENT = /* glsl */ `
+  uniform float time;
+  uniform vec3 coreColor;
+  uniform vec3 tipColor;
+  varying vec2 vUv;
+  varying vec3 vPos;
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  }
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+  }
+  void main() {
+    float along = vUv.y;
+    float n = noise(vec2(vUv.x * 8.0, vUv.y * 5.0 - time * 6.2));
+    float core = smoothstep(1.0, 0.12, along) * (0.55 + 0.45 * n);
+    vec3 col = mix(coreColor, tipColor, 1.0 - along);
+    float alpha = core;
+    gl_FragColor = vec4(col * alpha, alpha);
+  }
+`;
+
+/** Typed plume uniforms. */
+interface PlumeUniforms {
+  readonly time: { value: number };
+  readonly coreColor: { value: THREE.Color };
+  readonly tipColor: { value: THREE.Color };
+  [uniform: string]: { value: unknown };
+}
+
+const PLUME_UNIFORMS: PlumeUniforms = {
+  time: { value: 0 },
+  coreColor: { value: new THREE.Color('#ffb36b') },
+  tipColor: { value: new THREE.Color('#ff7a2a') },
+};
+
+const PLUME_MAT = new THREE.ShaderMaterial({
+  uniforms: PLUME_UNIFORMS,
+  vertexShader: PLUME_VERTEX,
+  fragmentShader: PLUME_FRAGMENT,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  toneMapped: false,
+  side: THREE.DoubleSide,
+});
+
+const PLUME_OUTER_MAT = new THREE.ShaderMaterial({
+  uniforms: PLUME_UNIFORMS,
+  vertexShader: PLUME_VERTEX,
+  fragmentShader: PLUME_FRAGMENT,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  toneMapped: false,
+  side: THREE.DoubleSide,
+});
+
+/**
+ * Lathe ogive: skirt through barrel into a closed nose, in city units.
+ * Y is up; radius is X. UVs wrap so the heat-tile map can repeat.
+ */
+function buildHullLathe(): THREE.LatheGeometry {
+  const pts = [
+    new THREE.Vector2(1.05, 0.08),
+    new THREE.Vector2(0.92, 0.48),
+    new THREE.Vector2(0.85, 1.15),
+    new THREE.Vector2(0.85, 5.2),
+    new THREE.Vector2(0.72, 5.7),
+    new THREE.Vector2(0.38, 6.7),
+    new THREE.Vector2(0.16, 7.32),
+    new THREE.Vector2(0.0, 7.5),
+  ];
+  const geo = new THREE.LatheGeometry(pts, 32);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const HULL_GEO = buildHullLathe();
 
 let tileMapBound = false;
 
-/** Bind the hex-tile canvas to the hull the first time a ship mounts on the client. */
+/** Bind the hex-tile albedo + roughness the first time a ship mounts. */
 function bindShipMaps(): void {
   if (tileMapBound || typeof document === 'undefined') {
     return;
   }
   const map = buildHeatTileMap();
   if (map) {
-    map.repeat.set(6, 4);
+    map.repeat.set(8, 6);
     SHIP_MAT.hull.map = map;
+    SHIP_MAT.hull.needsUpdate = true;
+  }
+  const rough = buildHeatTileRoughness();
+  if (rough) {
+    rough.repeat.set(8, 6);
+    SHIP_MAT.hull.roughnessMap = rough;
     SHIP_MAT.hull.needsUpdate = true;
   }
   tileMapBound = true;
@@ -95,6 +183,7 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
     }
     g.position.y += (props.targetY - g.position.y) * Math.min(1, delta * 1.6);
     const airborne = g.position.y > 0.4;
+    PLUME_UNIFORMS.time.value = state.clock.elapsedTime;
     if (plume.current) {
       plume.current.visible = airborne;
       const flicker = 1 + 0.18 * Math.sin(state.clock.elapsedTime * 31 + props.x);
@@ -138,7 +227,6 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
       <mesh position={[0, 0.22, 0]} material={SHIP_MAT.fin} castShadow>
         <cylinderGeometry args={[1.02, 1.1, 0.45, 20]} />
       </mesh>
-      {/* three engine bells in a triangle */}
       {(
         [
           [0, 0.28],
@@ -150,10 +238,7 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
           <cylinderGeometry args={[0.22, 0.13, 0.42, 10]} />
         </mesh>
       ))}
-      <mesh position={[0, 2.9, 0]} material={SHIP_MAT.hull} castShadow receiveShadow>
-        <cylinderGeometry args={[0.85, 0.85, 4.8, 22]} />
-      </mesh>
-      {/* darker heat-shield belly strip facing the camera-ish +z */}
+      <mesh geometry={HULL_GEO} material={SHIP_MAT.hull} castShadow receiveShadow />
       <mesh position={[0, 2.4, 0.72]} material={SHIP_MAT.tile}>
         <boxGeometry args={[0.55, 3.4, 0.06]} />
       </mesh>
@@ -162,12 +247,6 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
       </mesh>
       <mesh position={[0, 4.4, 0]} material={SHIP_MAT.tile}>
         <cylinderGeometry args={[0.87, 0.87, 0.14, 22]} />
-      </mesh>
-      <mesh position={[0, 6.35, 0]} material={SHIP_MAT.nose} castShadow>
-        <cylinderGeometry args={[0.16, 0.85, 2.1, 20]} />
-      </mesh>
-      <mesh position={[0, 7.42, 0]} material={SHIP_MAT.nose}>
-        <sphereGeometry args={[0.16, 12, 8]} />
       </mesh>
       <mesh position={[0, 5.15, 0.78]} material={SHIP_MAT.windowBand}>
         <boxGeometry args={[0.55, 0.18, 0.18]} />
@@ -201,11 +280,11 @@ function Starship(props: { x: number; z: number; targetY: number }): React.React
           </group>
         ))}
       </group>
-      <mesh ref={plume} position={[0, -1.35, 0]} material={SHIP_MAT.plume} visible={false}>
-        <coneGeometry args={[0.55, 2.8, 16]} />
+      <mesh ref={plume} position={[0, -1.35, 0]} material={PLUME_MAT} visible={false}>
+        <coneGeometry args={[0.55, 2.8, 16, 1, true]} />
       </mesh>
-      <mesh ref={plumeOuter} position={[0, -1.7, 0]} material={SHIP_MAT.plumeOuter} visible={false}>
-        <coneGeometry args={[0.95, 3.6, 14]} />
+      <mesh ref={plumeOuter} position={[0, -1.7, 0]} material={PLUME_OUTER_MAT} visible={false}>
+        <coneGeometry args={[0.95, 3.6, 14, 1, true]} />
       </mesh>
       <mesh ref={kick} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.1, 0]} visible={false}>
         <ringGeometry args={[0.7, 2.8, 28]} />

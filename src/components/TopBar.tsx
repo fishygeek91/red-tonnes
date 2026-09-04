@@ -8,6 +8,7 @@
 import { topBarStats } from '../lib/sim/derive';
 import { toneClass } from '../lib/ui/tone';
 import type { StatTone } from '../lib/ui/tone';
+import { getSite } from '../lib/sites';
 import { useSimStore } from '../store/useSimStore';
 import { Explainable } from './Explainable';
 import { useMissionActions } from './useMissionActions';
@@ -34,12 +35,13 @@ export function TopBar(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
   const { shareCopied, copyShareLink, copyBrief, openSources, openSetup } = useMissionActions();
   const t = topBarStats(sim);
+  const siteName = getSite(sim.siteId).name;
 
   return (
     <header className="flex items-center h-14 px-3 panel border-b border-[var(--line)] gap-1 select-none">
       <div className="flex flex-col pr-3">
         <span className="text-[var(--rust-hot)] font-bold tracking-[0.3em] text-sm brand-glow">RED TONNES</span>
-        <span className="text-[10px] text-[var(--dim)]">the sky stays thin</span>
+        <span className="text-[10px] text-[var(--dim)]">{siteName}</span>
       </div>
       <div className="flex items-center overflow-x-auto flex-1">
         <Stat
@@ -118,6 +120,7 @@ export function TopBar(): React.ReactElement {
           type="button"
           onClick={openSetup}
           className="text-[10px] px-2 py-1.5 border border-[var(--rust)] text-[var(--rust-hot)] hover:bg-[var(--rust)] hover:text-black tracking-widest uppercase"
+          title="Land a new city. Abandons this run — mass cannot teleport."
         >
           New game
         </button>

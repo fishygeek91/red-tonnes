@@ -12,19 +12,26 @@ import { MANIFEST_TEMPLATES } from '../lib/sim/state';
 import { SITES, getSite } from '../lib/sites';
 import { useSimStore } from '../store/useSimStore';
 
-/** The modal. */
+/** Gate: unmount the form while closed so it remounts with the live run. */
 export function SetupModal(): React.ReactElement | null {
   const show = useSimStore((s) => s.showSetup);
-  const setShow = useSimStore((s) => s.setShowSetup);
-  const newGame = useSimStore((s) => s.newGame);
-  const startDaily = useSimStore((s) => s.startDaily);
-  const [siteId, setSiteId] = useState('arcadia');
-  const [templateId, setTemplateId] = useState('balanced');
-  const [seed, setSeed] = useState(7);
-
   if (!show) {
     return null;
   }
+  return <SetupForm />;
+}
+
+/** The actual picker. Mounted only while the modal is open. */
+function SetupForm(): React.ReactElement {
+  const setShow = useSimStore((s) => s.setShowSetup);
+  const newGame = useSimStore((s) => s.newGame);
+  const startDaily = useSimStore((s) => s.startDaily);
+  const runLog = useSimStore((s) => s.runLog);
+  const pendingSetupSiteId = useSimStore((s) => s.pendingSetupSiteId);
+  const [siteId, setSiteId] = useState(pendingSetupSiteId ?? runLog.siteId);
+  const [templateId, setTemplateId] = useState(runLog.templateId);
+  const [seed, setSeed] = useState(runLog.seed);
+
   const daily = dailyChallenge(new Date());
   const dailySite = getSite(daily.siteId);
   const dailyTemplate = MANIFEST_TEMPLATES.find((t) => t.id === daily.templateId);
@@ -69,6 +76,9 @@ export function SetupModal(): React.ReactElement | null {
         </button>
 
         <h3 className="panel-title mb-1">Site</h3>
+        <p className="text-[10px] text-[var(--dim)] leading-snug mb-2">
+          A new landing starts a new ledger. Mass cannot teleport between cities.
+        </p>
         <div className="grid grid-cols-1 gap-1 mb-4">
           {SITES.map((s) => (
             <button

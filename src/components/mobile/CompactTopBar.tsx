@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { topBarStats } from '../../lib/sim/derive';
 import { toneClass } from '../../lib/ui/tone';
 import type { StatTone } from '../../lib/ui/tone';
+import { getSite } from '../../lib/sites';
 import { useSimStore } from '../../store/useSimStore';
 import { Explainable } from '../Explainable';
 import { useMissionActions } from '../useMissionActions';
@@ -35,9 +36,11 @@ function Vital(props: {
 export function CompactTopBar(): React.ReactElement {
   const sim = useSimStore((s) => s.sim);
   const setMobileSheet = useSimStore((s) => s.setMobileSheet);
+  const setViewIntent = useSimStore((s) => s.setViewIntent);
   const { shareCopied, copyShareLink, copyBrief, openSources, openSetup } = useMissionActions();
   const [menuOpen, setMenuOpen] = useState(false);
   const t = topBarStats(sim);
+  const siteName = getSite(sim.siteId).name;
 
   const caloriesOk = t.kcalPerPersonSol >= 2700;
   const waterRisk = t.waterDaysReserve <= 60;
@@ -62,7 +65,7 @@ export function CompactTopBar(): React.ReactElement {
             RED TONNES
           </span>
           <span className="text-[9px] text-[var(--dim)] truncate">
-            W{t.window} · sol {sim.sol}
+            {siteName} · sol {sim.sol}
           </span>
         </div>
         <div className="flex-1" />
@@ -114,6 +117,16 @@ export function CompactTopBar(): React.ReactElement {
                 className="w-full text-left px-3 min-h-11 text-[11px] uppercase tracking-widest text-[var(--dim)] hover:text-[var(--text)]"
               >
                 Sources
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewIntent('planet');
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 min-h-11 text-[11px] uppercase tracking-widest text-[var(--dim)] hover:text-[var(--text)]"
+              >
+                Switch city
               </button>
               <button
                 type="button"

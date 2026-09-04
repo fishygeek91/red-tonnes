@@ -25,6 +25,9 @@ export const SPEEDS: readonly number[] = [1, 5, 20, 60];
 /** Bottom-sheet panels on the phone/tablet city-first shell. */
 export type MobileSheetId = 'plan' | 'status' | 'time';
 
+/** Requested city-canvas framing. CityScene consumes it, then clears it. */
+export type ViewIntent = 'city' | 'planet';
+
 /** Store shape. */
 interface SimStore {
   /** The authoritative simulation state. */
@@ -57,6 +60,12 @@ interface SimStore {
   audioEnabled: boolean;
   /** Open phone/tablet sheet; null = city unobstructed. */
   mobileSheet: MobileSheetId | null;
+  /** Pin whose dossier is open on the globe; null = none. */
+  globeFocusId: string | null;
+  /** One-shot camera request for the city canvas. */
+  viewIntent: ViewIntent | null;
+  /** Site to pre-select in the new-game modal; null = current run. */
+  pendingSetupSiteId: string | null;
 
   /** Start a new game from the setup screen. */
   newGame: (seed: number, siteId: string, templateId: string) => void;
@@ -100,6 +109,12 @@ interface SimStore {
   setAudioEnabled: (v: boolean) => void;
   /** Open or close a city-first bottom sheet. */
   setMobileSheet: (sheet: MobileSheetId | null) => void;
+  /** Open (or clear) a globe-pin dossier. */
+  setGlobeFocus: (id: string | null) => void;
+  /** Ask the city camera to ease to street or whole-planet framing. */
+  setViewIntent: (intent: ViewIntent | null) => void;
+  /** Open New City with a site already selected. */
+  openSetupAtSite: (siteId: string) => void;
 }
 
 /** Default demo seed: chosen so a global dust storm hits mid–window 0 (onset ~sol 420) while the nuclear floor keeps the city alive — the demo tells the whole story by itself. */
@@ -121,6 +136,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
   ghost: null,
   audioEnabled: false,
   mobileSheet: null,
+  globeFocusId: null,
+  viewIntent: null,
+  pendingSetupSiteId: null,
 
   newGame: (seed, siteId, templateId) => {
     set({
@@ -134,6 +152,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       inspectId: null,
       ghost: null,
       mobileSheet: null,
+      globeFocusId: null,
+      viewIntent: 'city',
+      pendingSetupSiteId: null,
     });
   },
 
@@ -154,6 +175,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       inspectId: null,
       ghost: null,
       mobileSheet: null,
+      globeFocusId: null,
+      viewIntent: 'city',
+      pendingSetupSiteId: null,
     });
   },
 
@@ -173,6 +197,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       inspectId: null,
       ghost: ghostFromReplay(log, replayed),
       mobileSheet: null,
+      globeFocusId: null,
+      viewIntent: 'city',
+      pendingSetupSiteId: null,
     });
   },
 
@@ -195,6 +222,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       sharedNotice: false,
       inspectId: null,
       mobileSheet: null,
+      globeFocusId: null,
+      viewIntent: 'city',
+      pendingSetupSiteId: null,
     });
   },
 
@@ -266,7 +296,12 @@ export const useSimStore = create<SimStore>((set, get) => ({
     });
   },
 
-  setShowSetup: (v) => set({ showSetup: v, mobileSheet: v ? null : get().mobileSheet }),
+  setShowSetup: (v) =>
+    set({
+      showSetup: v,
+      mobileSheet: v ? null : get().mobileSheet,
+      pendingSetupSiteId: v ? get().pendingSetupSiteId : null,
+    }),
   setShowSources: (v) => set({ showSources: v, mobileSheet: v ? null : get().mobileSheet }),
   setShowOverlay: (v) => set({ showOverlay: v }),
   setInspect: (id) => set({ inspectId: id, mobileSheet: id !== null ? null : get().mobileSheet }),
@@ -276,5 +311,13 @@ export const useSimStore = create<SimStore>((set, get) => ({
     set({
       mobileSheet: sheet,
       inspectId: sheet !== null ? null : get().inspectId,
+    }),
+  setGlobeFocus: (id) => set({ globeFocusId: id }),
+  setViewIntent: (intent) => set({ viewIntent: intent }),
+  openSetupAtSite: (siteId) =>
+    set({
+      showSetup: true,
+      pendingSetupSiteId: siteId,
+      mobileSheet: null,
     }),
 }));

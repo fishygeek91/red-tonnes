@@ -166,6 +166,14 @@ export function faceSiteToUp(site: Site): THREE.Quaternion {
   return new THREE.Quaternion().setFromUnitVectors(tiltedSiteDir(site), new THREE.Vector3(0, 1, 0));
 }
 
+/**
+ * Outward unit vector from globe center through `site` after `pole`
+ * (the home-site-to-+Y rotation used by the city canvas).
+ */
+export function siteOutward(site: Site, pole: THREE.Quaternion): THREE.Vector3 {
+  return tiltedSiteDir(site).applyQuaternion(pole);
+}
+
 /** The globe mesh, atmosphere, and site pins. */
 export function MarsBody(props: MarsBodyProps): React.ReactElement {
   const radius = props.radius ?? 1;
@@ -283,6 +291,7 @@ export function MarsBody(props: MarsBodyProps): React.ReactElement {
                       }`}
                     >
                       {s.name}
+                      {active ? ' · you' : ''}
                     </div>
                   </Html>
                 ) : null}

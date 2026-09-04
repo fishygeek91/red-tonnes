@@ -19,13 +19,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useNarrowViewport } from '../../hooks/useNarrowViewport';
 import { rngFromSeed, rngNext, type RngState } from '../../lib/rng';
-import { getSite, type Site } from '../../lib/sites';
+import { getSite, SITES, type Site } from '../../lib/sites';
 import { inspect } from '../../lib/sim/inspect';
 import { clamp } from '../../lib/types';
 import { useSimStore } from '../../store/useSimStore';
 import { DustRig } from './atmosphere';
 import { MAT } from './materials';
-import { faceSiteToUp, MarsBody } from './MarsBody';
+import { faceSiteToUp, MarsBody, siteOutward } from './MarsBody';
 import {
   bandFromZoom,
   CITY_POLAR,
@@ -351,6 +351,7 @@ function isPerspective(cam: THREE.Camera): cam is THREE.PerspectiveCamera {
  */
 function ZoomDirector(props: {
   tGoal: React.RefObject<number>;
+  lookDir: React.RefObject<THREE.Vector3 | null>;
   onBand: (band: ViewBand) => void;
 }): React.ReactElement | null {
   const { tGoal, onBand } = props;
@@ -425,6 +426,16 @@ function ZoomDirector(props: {
     if (SCRATCH_DIR.lengthSq() < 1e-6) {
       SCRATCH_DIR.set(0.42, 0.32, 0.84);
     }
+    SCRATCH_DIR.normalize();
+    const lookAt = props.lookDir;
+    const look = lookAt === undefined ? null : lookAt.current;
+    if (framed && look !== null) {
+      SCRATCH_DIR.lerp(look, 1 - Math.exp(-delta * 2.8));
+      const len = SCRATCH_DIR.length();
+      if (len > 1e-6) {
+        SCRATCH_DIR.multiplyScalar(1 / len);
+      }
+    }
     SCRATCH_DIR.setLength(dist);
     cam.position.copy(pivot).add(SCRATCH_DIR);
     if (!c) {
@@ -461,7 +472,10 @@ function CityLayer(props: { children: React.ReactNode }): React.ReactElement {
 function SiteDossier(props: {
   site: Site;
   home: boolean;
-  onLand: () => void;
+  sol: number;
+  onDropToCity: () => void;
+  onLandHere: () => void;
+  onChooseCargo: () => void;
   onClose: () => void;
 }): React.ReactElement {
   const narrow = useNarrowViewport();
@@ -512,15 +526,33 @@ function SiteDossier(props: {
       {props.home ? (
         <button
           type="button"
-          onClick={props.onLand}
+          onClick={props.onDropToCity}
           className="w-full min-h-11 border border-[var(--green)] text-[var(--green)] text-[10px] tracking-widest uppercase hover:bg-[var(--green)]/10"
         >
           Drop to city
         </button>
       ) : (
-        <p className="text-[9px] text-[var(--dim)] leading-snug">
-          A candidate site — this run is already landed. New Game to settle here.
-        </p>
+        <div className="space-y-1.5">
+          <p className="text-[9px] text-[var(--dim)] leading-snug">
+            Abandons this city at sol {props.sol}. Mass cannot teleport — a new
+            landing starts a new ledger. Same seed and first-window cargo unless
+            you pick cargo first.
+          </p>
+          <button
+            type="button"
+            onClick={props.onLandHere}
+            className="w-full min-h-11 border border-[var(--rust)] text-[var(--rust-hot)] text-[10px] tracking-widest uppercase hover:bg-[var(--rust)] hover:text-black"
+          >
+            Land here
+          </button>
+          <button
+            type="button"
+            onClick={props.onChooseCargo}
+            className="w-full min-h-11 border border-[var(--line)] text-[var(--dim)] text-[10px] tracking-widest uppercase hover:border-[var(--rust)] hover:text-[var(--text)]"
+          >
+            Pick cargo first
+          </button>
+        </div>
       )}
     </div>
   );
@@ -531,11 +563,20 @@ export function CityScene(): React.ReactElement {
   const setInspect = useSimStore((s) => s.setInspect);
   const inspectId = useSimStore((s) => s.inspectId);
   const siteId = useSimStore((s) => s.sim.siteId);
+  const sol = useSimStore((s) => s.sim.sol);
+  const runLog = useSimStore((s) => s.runLog);
+  const newGame = useSimStore((s) => s.newGame);
+  const openSetupAtSite = useSimStore((s) => s.openSetupAtSite);
+  const focusId = useSimStore((s) => s.globeFocusId);
+  const setFocusId = useSimStore((s) => s.setGlobeFocus);
+  const viewIntent = useSimStore((s) => s.viewIntent);
+  const setViewIntent = useSimStore((s) => s.setViewIntent);
   const lite = useNarrowViewport();
   const [band, setBand] = useState<ViewBand>('city');
-  const [focusId, setFocusId] = useState<string | null>(null);
   const tGoal = useRef(CITY_T);
+  const lookDir = useRef<THREE.Vector3 | null>(null);
   const pole = useMemo(() => faceSiteToUp(getSite(siteId)), [siteId]);
+  const homeSite = getSite(siteId);
   const focusSite = focusId ? getSite(focusId) : null;
   const inCity = band === 'city';
   const inOrbit = band === 'orbit';
@@ -546,11 +587,38 @@ export function CityScene(): React.ReactElement {
     }
   }, [inCity, setInspect]);
 
+  useEffect(() => {
+    if (focusId === null) {
+      lookDir.current = null;
+      return;
+    }
+    lookDir.current = siteOutward(getSite(focusId), pole);
+  }, [focusId, pole]);
+
+  useEffect(() => {
+    if (viewIntent === 'planet') {
+      tGoal.current = ORBIT_T;
+      setViewIntent(null);
+    } else if (viewIntent === 'city') {
+      tGoal.current = CITY_T;
+      setFocusId(null);
+      setViewIntent(null);
+    }
+  }, [viewIntent, setViewIntent, setFocusId]);
+
   /** Ease the log-zoom to a named framing. */
   const goTo = (next: number): void => {
     tGoal.current = next;
     if (next <= CITY_T) {
       setFocusId(null);
+    }
+  };
+
+  /** Open a pin dossier and climb to orbit if we are still on the dirt. */
+  const lookAtSite = (id: string): void => {
+    setFocusId(id);
+    if (!inOrbit) {
+      tGoal.current = ORBIT_T;
     }
   };
 
@@ -577,7 +645,7 @@ export function CityScene(): React.ReactElement {
       >
         <color attach="background" args={['#1c0f0d']} />
         <ambientLight intensity={0.22} />
-        <ZoomDirector tGoal={tGoal} onBand={setBand} />
+        <ZoomDirector tGoal={tGoal} lookDir={lookDir} onBand={setBand} />
         <DustRig />
         {inCity ? null : (
           <Stars
@@ -636,13 +704,47 @@ export function CityScene(): React.ReactElement {
         className="absolute top-2 right-2 z-20 min-h-11 px-3 panel border border-[var(--line)] text-[10px] tracking-widest uppercase text-[var(--text)] hover:border-[var(--rust-hot)]"
         title={inOrbit ? 'Descend to the settlement' : 'Zoom out to Mars'}
       >
-        {inOrbit ? 'City' : 'Planet'}
+        <span className="block">{inOrbit ? 'City' : 'Planet'}</span>
+        <span className="block text-[8px] text-[var(--dim)] normal-case tracking-wide font-normal">
+          {homeSite.name}
+        </span>
       </button>
+      {inOrbit ? (
+        <div className="absolute top-14 right-2 z-20 flex flex-col gap-0.5 w-[148px]">
+          {SITES.map((s) => {
+            const home = s.id === siteId;
+            const focused = s.id === focusId;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => lookAtSite(s.id)}
+                className={`min-h-9 px-2 text-left text-[9px] tracking-wide border ${
+                  focused
+                    ? 'border-[var(--rust-hot)] text-[var(--rust-hot)]'
+                    : home
+                      ? 'border-[var(--green)] text-[var(--green)]'
+                      : 'border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)] hover:border-[var(--dim)]'
+                }`}
+                title={home ? 'This run is landed here' : `Look at ${s.name}`}
+              >
+                {home ? '● ' : '○ '}
+                {s.name}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       {!inCity && focusSite ? (
         <SiteDossier
           site={focusSite}
           home={focusSite.id === siteId}
-          onLand={() => goTo(CITY_T)}
+          sol={sol}
+          onDropToCity={() => goTo(CITY_T)}
+          onLandHere={() => {
+            newGame(runLog.seed, focusSite.id, runLog.templateId);
+          }}
+          onChooseCargo={() => openSetupAtSite(focusSite.id)}
           onClose={() => setFocusId(null)}
         />
       ) : null}
@@ -650,12 +752,12 @@ export function CityScene(): React.ReactElement {
       {inspectId === null && !focusSite ? (
         <div className="absolute bottom-2 left-2 text-[9px] text-[var(--dim)] pointer-events-none">
           {inOrbit
-            ? 'keep scrolling in to land · click a pin for its dossier'
+            ? 'click a site to land a new city · green is home'
             : band === 'climb'
               ? 'keep scrolling — the city is still below'
               : lite
-                ? 'tap a building · scroll out for the globe'
-                : 'scroll out for the globe · click any structure for its datasheet'}
+                ? 'tap a building · Planet to switch cities'
+                : 'scroll out or Planet to switch cities · click a structure for its datasheet'}
         </div>
       ) : null}
     </div>

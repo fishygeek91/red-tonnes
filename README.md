@@ -21,12 +21,12 @@ A clear sol — Starships on the pads, greenhouses glowing, ISRU humming.
 Ship traffic is real: arrivals descend on landing burns when a window opens,
 and a fueled ship climbs out at the departure sol:
 
-![Clear day at Arcadia Planitia, sol 337](docs/screenshot-clear.png)
+![Clear day at Arcadia Planitia, sol 336](docs/screenshot-clear.png)
 
-Then the global dust storm hits (τ 4.3): solar collapses, the city dims to
+Then the global dust storm hits (τ 4.6): solar collapses, the city dims to
 its nuclear floor, and ISRU turns down while life support holds:
 
-![Global dust storm, sol 480, optical depth 4.3](docs/screenshot.png)
+![Global dust storm, sol 451, optical depth 4.6](docs/screenshot.png)
 
 ## Install & run
 

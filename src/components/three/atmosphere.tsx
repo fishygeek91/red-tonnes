@@ -9,14 +9,14 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useNarrowViewport } from '../../hooks/useNarrowViewport';
+import { useGraphicsTier } from '../../hooks/useGraphicsTier';
 import { getSite, opticalDepthAtSol } from '../../lib/sites';
 import { rngFromSeed, rngNext, type RngState } from '../../lib/rng';
 import type { SimState, SolSnapshot } from '../../lib/sim/state';
 import { clamp } from '../../lib/types';
 import { sunlightFraction } from '../../lib/sim/step';
 import { useSimStore } from '../../store/useSimStore';
-import { bindCanvasMaps, buildDustSprite, MAT } from './materials';
+import { applyDustCoat, bindCanvasMaps, buildDustSprite, MAT } from './materials';
 import { ORBIT } from './orbit';
 import { siteLook, SUN_DIR, terrainHeight, type SiteLook } from './regolith';
 
@@ -64,7 +64,7 @@ const SKY_FRAGMENT = /* glsl */ `
     float cosSun = max(dot(dir, sunDir), 0.0);
     sky += sunColor * pow(cosSun, mix(26.0, 6.0, haze)) * mix(0.55, 0.2, haze);
     float disc = smoothstep(mix(0.99993, 0.9994, haze), 0.99997, cosSun);
-    sky += sunColor * disc * mix(2.6, 0.4, haze);
+    sky += sunColor * disc * mix(3.4, 0.35, haze);
     float stars = step(0.9965, hash13(floor(dir * 92.0))) * pow(h, 2.2) * (1.0 - haze);
     sky += vec3(0.95, 0.88, 0.8) * stars * 0.65;
     vec3 spaceCol = vec3(0.027, 0.024, 0.039);
@@ -72,6 +72,11 @@ const SKY_FRAGMENT = /* glsl */ `
     gl_FragColor = vec4(sky, 1.0);
   }
 `;
+
+/** Scratch colors so the sky can chase a continuous storm mix without allocating. */
+const SKY_TOP = new THREE.Color();
+const SKY_HORIZON = new THREE.Color();
+const SKY_SUN = new THREE.Color();
 
 /** Sky palette endpoints, lerped by live daylight each frame. */
 export const SKY_CLEAR = {
@@ -97,7 +102,7 @@ interface SkyUniforms {
 }
 
 /** The dome: a big back-faced sphere whose colors chase the dust. */
-function SkyDome(props: { daylight: number }): React.ReactElement {
+function SkyDome(): React.ReactElement {
   const uniforms = useMemo<SkyUniforms>(
     () => ({
       topColor: { value: SKY_CLEAR.top.clone() },
@@ -110,14 +115,14 @@ function SkyDome(props: { daylight: number }): React.ReactElement {
     [],
   );
   useFrame((_, delta) => {
-    const storminess = 1 - props.daylight;
+    const storminess = 1 - ORBIT.daylight;
     const k = clamp(delta * 1.5, 0, 1);
-    uniforms.topColor.value.lerp(storminess > 0.5 ? SKY_STORM.top : SKY_CLEAR.top, k);
-    uniforms.horizonColor.value.lerp(
-      storminess > 0.5 ? SKY_STORM.horizon : SKY_CLEAR.horizon,
-      k,
-    );
-    uniforms.sunColor.value.lerp(storminess > 0.5 ? SKY_STORM.sun : SKY_CLEAR.sun, k);
+    SKY_TOP.copy(SKY_CLEAR.top).lerp(SKY_STORM.top, storminess);
+    SKY_HORIZON.copy(SKY_CLEAR.horizon).lerp(SKY_STORM.horizon, storminess);
+    SKY_SUN.copy(SKY_CLEAR.sun).lerp(SKY_STORM.sun, storminess);
+    uniforms.topColor.value.lerp(SKY_TOP, k);
+    uniforms.horizonColor.value.lerp(SKY_HORIZON, k);
+    uniforms.sunColor.value.lerp(SKY_SUN, k);
     // eslint-disable-next-line react-hooks/immutability -- three.js uniforms are mutated in the frame loop by design
     uniforms.haze.value += (storminess - uniforms.haze.value) * k;
     uniforms.fade.value = 1 - ORBIT.space;
@@ -128,6 +133,7 @@ function SkyDome(props: { daylight: number }): React.ReactElement {
       <shaderMaterial
         side={THREE.BackSide}
         depthWrite={false}
+        toneMapped={false}
         uniforms={uniforms}
         vertexShader={SKY_VERTEX}
         fragmentShader={SKY_FRAGMENT}
@@ -164,7 +170,7 @@ function WarmEnvironment(): null {
 }
 
 /** Soft radial haze hugging the ground — thicker when the sky is dirty. */
-function GroundHaze(props: { daylight: number }): React.ReactElement {
+function GroundHaze(): React.ReactElement {
   const mat = useRef<THREE.MeshBasicMaterial>(null);
   const sprite = useMemo(() => buildDustSprite(), []);
   useFrame((_, delta) => {
@@ -172,7 +178,7 @@ function GroundHaze(props: { daylight: number }): React.ReactElement {
       return;
     }
     const space = ORBIT.space;
-    const target = (0.1 + (1 - props.daylight) * 0.2) * (1 - space);
+    const target = (0.08 + (1 - ORBIT.daylight) * 0.16) * (1 - space);
     mat.current.opacity += (target - mat.current.opacity) * Math.min(1, delta * 1.4);
   });
   return (
@@ -192,8 +198,8 @@ function GroundHaze(props: { daylight: number }): React.ReactElement {
 }
 
 /** Wind-blown dust: a drifting point field that fades in with optical depth. */
-function DustParticles(props: { tau: number }): React.ReactElement {
-  const count = 1100;
+function DustParticles(): React.ReactElement {
+  const count = 600;
   const box = { x: 180, y: 26, z: 180 };
   const attrRef = useRef<THREE.BufferAttribute>(null);
   const matRef = useRef<THREE.PointsMaterial>(null);
@@ -214,15 +220,15 @@ function DustParticles(props: { tau: number }): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useFrame((_, delta) => {
-    const targetOpacity = clamp((props.tau - 0.5) / 3.4, 0, 0.58) * (1 - ORBIT.space);
+    const targetOpacity = clamp((ORBIT.tau - 0.5) / 3.4, 0, 0.45) * (1 - ORBIT.space);
     if (matRef.current) {
       matRef.current.opacity += (targetOpacity - matRef.current.opacity) * Math.min(1, delta * 2);
     }
     const attr = attrRef.current;
-    if (!attr || targetOpacity <= 0.001) {
+    if (!attr || targetOpacity <= 0.001 || ORBIT.busy) {
       return;
     }
-    const wind = (3 + props.tau * 9) * delta;
+    const wind = (3 + ORBIT.tau * 9) * delta;
     const arr = attr.array;
     for (let i = 0; i < count; i += 1) {
       let x = arr[i * 3] + wind;
@@ -263,7 +269,6 @@ function DustParticles(props: { tau: number }): React.ReactElement {
  * past ~1.2. Stays off the graded pad so it does not eat the city.
  */
 function DustDevil(props: {
-  tau: number;
   look: SiteLook;
   seed: number;
   wander: readonly [number, number];
@@ -289,12 +294,12 @@ function DustDevil(props: {
       spinRef.current = { angle, height };
     }
     const spin = spinRef.current;
-    const strength = clamp((props.tau - 1.15) / 2.4, 0, 1);
+    const strength = clamp((ORBIT.tau - 1.15) / 2.4, 0, 1);
     if (matRef.current) {
       matRef.current.opacity += (strength * 0.7 - matRef.current.opacity) * Math.min(1, delta * 2);
     }
     const attr = attrRef.current;
-    if (!attr || strength <= 0.01) {
+    if (!attr || strength <= 0.01 || ORBIT.busy) {
       return;
     }
     const t = state.clock.elapsedTime * 0.07 + props.seed * 0.01;
@@ -360,27 +365,36 @@ function Phobos(): React.ReactElement {
 }
 
 /**
- * Directional sun. Soft 2k shadows on desktop; no shadow map on phones.
- * @param props.daylight - 0–1 normalized insolation after dust.
+ * Directional sun. PCF shadows on medium/high; no shadow map on low.
+ * Intensity follows ORBIT.daylight so this mesh does not re-render every sol.
  */
-function LiteSun(props: { daylight: number }): React.ReactElement {
-  const lite = useNarrowViewport();
-  if (lite) {
+function LiteSun(): React.ReactElement {
+  const light = useRef<THREE.DirectionalLight>(null);
+  const tier = useGraphicsTier();
+  useFrame(() => {
+    if (light.current) {
+      light.current.intensity = 0.45 + ORBIT.daylight * 3.2;
+    }
+  });
+  if (tier === 'low') {
     return (
       <directionalLight
+        ref={light}
         position={[SUN_DIR.x * 90, SUN_DIR.y * 90, SUN_DIR.z * 90]}
-        intensity={0.45 + props.daylight * 3.2}
+        intensity={1.6}
         color="#ffd9b0"
       />
     );
   }
+  const map = 1024;
   return (
     <directionalLight
+      ref={light}
       position={[SUN_DIR.x * 90, SUN_DIR.y * 90, SUN_DIR.z * 90]}
-      intensity={0.45 + props.daylight * 3.2}
+      intensity={1.6}
       color="#ffd9b0"
       castShadow
-      shadow-mapSize={[2048, 2048]}
+      shadow-mapSize={[map, map]}
       shadow-camera-left={-70}
       shadow-camera-right={70}
       shadow-camera-top={70}
@@ -394,7 +408,7 @@ function LiteSun(props: { daylight: number }): React.ReactElement {
 }
 
 /** Expand city fog into space; push it past the far plane once the sky is gone. */
-function SceneFog(props: { daylight: number }): React.ReactElement {
+function SceneFog(): React.ReactElement {
   const fogColor = useMemo(() => new THREE.Color('#5f2f1a'), []);
   const spaceTint = useMemo(() => new THREE.Color('#07060a'), []);
   useFrame((state) => {
@@ -403,10 +417,10 @@ function SceneFog(props: { daylight: number }): React.ReactElement {
       return;
     }
     const space = ORBIT.space;
-    fog.color.copy(SKY_STORM.horizon).lerp(SKY_CLEAR.horizon, props.daylight);
+    fog.color.copy(SKY_STORM.horizon).lerp(SKY_CLEAR.horizon, ORBIT.daylight);
     fog.color.lerp(spaceTint, space);
-    const cityNear = 32 + props.daylight * 28;
-    const cityFar = 95 + 210 * Math.pow(props.daylight, 1.35);
+    const cityNear = 32 + ORBIT.daylight * 28;
+    const cityFar = 95 + 210 * Math.pow(ORBIT.daylight, 1.35);
     fog.near = cityNear + space * 1800;
     fog.far = space > 0.82 ? 40000 : cityFar + space * 11000;
   });
@@ -415,28 +429,47 @@ function SceneFog(props: { daylight: number }): React.ReactElement {
 
 /** Atmosphere rig: sky, fog, sun, dust, devils, and the shared beacon pulse. */
 export function DustRig(): React.ReactElement {
-  const sim = useSimStore((s) => s.sim);
-  const scrubSol = useSimStore((s) => s.scrubSol);
-  const lite = useNarrowViewport();
-  const site = getSite(sim.siteId);
-  const look = siteLook(sim.siteId);
-  const snap = viewSnapshot(sim, scrubSol);
-  const tau = snap ? snap.tau : opticalDepthAtSol(sim.sol, false, site.dustFactor);
-  const sun = sunlightFraction(tau);
-  const daylight = clamp(sun / 0.5, 0, 1);
+  const siteId = useSimStore((s) => s.sim.siteId);
+  const tier = useGraphicsTier();
+  const look = siteLook(siteId);
   const hemi = useRef<THREE.HemisphereLight>(null);
   const cityFill = useRef<THREE.PointLight>(null);
   const spaceSun = useRef<THREE.DirectionalLight>(null);
   const surface = useRef<THREE.Group>(null);
-  useFrame((state) => {
-    const pulse = 0.45 + 2.1 * (0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 3.4));
+  const coat = useRef(0);
+  const shadowsFrozen = useRef(false);
+  useFrame((state, delta) => {
+    const { sim, scrubSol } = useSimStore.getState();
+    const site = getSite(sim.siteId);
+    const snap = viewSnapshot(sim, scrubSol);
+    const tau = snap ? snap.tau : opticalDepthAtSol(sim.sol, false, site.dustFactor);
+    const daylight = clamp(sunlightFraction(tau) / 0.5, 0, 1);
+    ORBIT.tau = tau;
+    ORBIT.daylight = daylight;
+    ORBIT.dust = 1 - daylight;
+    const pulse = 0.28 + 0.42 * (0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 3.4));
     MAT.beacon.emissiveIntensity = pulse;
     const space = ORBIT.space;
+    const k = Math.min(1, delta * 1.5);
+    coat.current += (1 - daylight - coat.current) * k;
+    if (!ORBIT.busy) {
+      applyDustCoat(coat.current);
+    }
+    const freezeShadows = ORBIT.busy || space > 0.35;
+    if (freezeShadows !== shadowsFrozen.current) {
+      shadowsFrozen.current = freezeShadows;
+      state.gl.shadowMap.autoUpdate = !freezeShadows;
+      if (!freezeShadows) {
+        state.gl.shadowMap.needsUpdate = true;
+      }
+    }
+    state.gl.toneMappingExposure = 0.46 + daylight * 0.64;
+    state.scene.environmentIntensity = (0.14 + daylight * 0.32) * (1 - space * 0.45);
     if (hemi.current) {
       hemi.current.intensity = (0.42 + daylight * 0.55) * (1 - space * 0.72);
     }
     if (cityFill.current) {
-      cityFill.current.intensity = 1.7 * (1 - space);
+      cityFill.current.intensity = 0.28 * (1 - space) * (0.25 + daylight * 0.75);
     }
     if (spaceSun.current) {
       spaceSun.current.intensity = 0.15 + space * 2.4;
@@ -444,31 +477,31 @@ export function DustRig(): React.ReactElement {
     if (surface.current) {
       surface.current.visible = space < 0.55;
     }
-  });
+  }, -1);
   return (
     <>
       <WarmEnvironment />
-      <SkyDome daylight={daylight} />
-      <SceneFog daylight={daylight} />
-      <hemisphereLight ref={hemi} args={['#e8a06a', '#4a2414', 0.42 + daylight * 0.55]} />
-      <LiteSun daylight={daylight} />
+      <SkyDome />
+      <SceneFog />
+      <hemisphereLight ref={hemi} args={['#e8a06a', '#4a2414', 0.7]} />
+      <LiteSun />
       <directionalLight
         ref={spaceSun}
         position={[SUN_DIR.x * 4200, SUN_DIR.y * 4200, SUN_DIR.z * 4200]}
         intensity={0.15}
         color="#fff2e0"
       />
-      <pointLight ref={cityFill} position={[0, 8, 0]} intensity={1.7} color="#e2661a" distance={40} />
-      <GroundHaze daylight={daylight} />
-      <DustParticles tau={tau} />
+      <pointLight ref={cityFill} position={[0, 8, 0]} intensity={0.28} color="#e2661a" distance={40} />
+      <GroundHaze />
+      <DustParticles />
       <group ref={surface}>
-        {lite ? null : (
+        {tier === 'high' ? (
           <>
-            <DustDevil tau={tau} look={look} seed={11} wander={[48, 22]} />
-            <DustDevil tau={tau} look={look} seed={29} wander={[-52, -28]} />
+            <DustDevil look={look} seed={11} wander={[48, 22]} />
+            <DustDevil look={look} seed={29} wander={[-52, -28]} />
             <Phobos />
           </>
-        )}
+        ) : null}
       </group>
     </>
   );

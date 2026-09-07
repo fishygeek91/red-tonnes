@@ -28,6 +28,24 @@ export type MobileSheetId = 'plan' | 'status' | 'time';
 /** Requested city-canvas framing. CityScene consumes it, then clears it. */
 export type ViewIntent = 'city' | 'planet';
 
+/** Desktop WebGL quality. Narrow viewports ignore this and force `low`. */
+export type GraphicsQuality = 'high' | 'medium' | 'low';
+
+/**
+ * Cycle GFX high → medium → low → high.
+ * @param current - The quality currently requested in the store.
+ * @returns The next quality in the cycle.
+ */
+export function nextGraphicsQuality(current: GraphicsQuality): GraphicsQuality {
+  if (current === 'high') {
+    return 'medium';
+  }
+  if (current === 'medium') {
+    return 'low';
+  }
+  return 'high';
+}
+
 /** Store shape. */
 interface SimStore {
   /** The authoritative simulation state. */
@@ -66,6 +84,8 @@ interface SimStore {
   viewIntent: ViewIntent | null;
   /** Site to pre-select in the new-game modal; null = current run. */
   pendingSetupSiteId: string | null;
+  /** Desktop WebGL quality request. Phones still render `low`. */
+  graphicsQuality: GraphicsQuality;
 
   /** Start a new game from the setup screen. */
   newGame: (seed: number, siteId: string, templateId: string) => void;
@@ -115,6 +135,8 @@ interface SimStore {
   setViewIntent: (intent: ViewIntent | null) => void;
   /** Open New City with a site already selected. */
   openSetupAtSite: (siteId: string) => void;
+  /** Set the desktop GFX tier (narrow viewports still force low). */
+  setGraphicsQuality: (quality: GraphicsQuality) => void;
 }
 
 /** Default demo seed: chosen so a global dust storm hits mid–window 0 (onset ~sol 420) while the nuclear floor keeps the city alive — the demo tells the whole story by itself. */
@@ -139,6 +161,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   globeFocusId: null,
   viewIntent: null,
   pendingSetupSiteId: null,
+  graphicsQuality: 'medium',
 
   newGame: (seed, siteId, templateId) => {
     set({
@@ -320,4 +343,5 @@ export const useSimStore = create<SimStore>((set, get) => ({
       pendingSetupSiteId: siteId,
       mobileSheet: null,
     }),
+  setGraphicsQuality: (quality) => set({ graphicsQuality: quality }),
 }));

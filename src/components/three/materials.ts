@@ -277,7 +277,7 @@ export const MAT = {
   padRing: new THREE.MeshStandardMaterial({
     color: '#3a3028',
     emissive: '#e2661a',
-    emissiveIntensity: 1.6,
+    emissiveIntensity: 0.45,
     roughness: 0.6,
   }),
   solar: new THREE.MeshStandardMaterial({ color: '#1d2c3c', roughness: 0.22, metalness: 0.45 }),
@@ -285,7 +285,7 @@ export const MAT = {
   habitatWindow: new THREE.MeshStandardMaterial({
     color: '#241a10',
     emissive: '#ffd9a0',
-    emissiveIntensity: 1.8,
+    emissiveIntensity: 0.4,
     roughness: 0.4,
   }),
   drum: new THREE.MeshStandardMaterial({ color: '#5d6b46', roughness: 0.78 }),
@@ -298,26 +298,19 @@ export const MAT = {
     clearcoat: 0.45,
     clearcoatRoughness: 0.25,
   }),
-  waterDome: new THREE.MeshPhysicalMaterial({
+  waterDome: new THREE.MeshStandardMaterial({
     color: '#7cc7e8',
-    roughness: 0.12,
-    metalness: 0.08,
+    roughness: 0.18,
+    metalness: 0.28,
     transparent: true,
-    opacity: 0.52,
-    depthWrite: false,
-    // Transmission needs a scene buffer the EffectComposer does not provide.
-    transmission: 0,
-    thickness: 1.2,
-    ior: 1.33,
-    clearcoat: 0.55,
-    clearcoatRoughness: 0.15,
+    opacity: 0.72,
   }),
   berm: new THREE.MeshStandardMaterial({ color: '#54291a', roughness: 1 }),
   rock: new THREE.MeshStandardMaterial({ color: '#5f2f1c', roughness: 1, flatShading: true }),
   beacon: new THREE.MeshStandardMaterial({
     color: '#3a1505',
     emissive: '#e2661a',
-    emissiveIntensity: 1.8,
+    emissiveIntensity: 0.5,
     roughness: 0.4,
   }),
   frost: new THREE.MeshStandardMaterial({
@@ -332,7 +325,7 @@ export const MAT = {
   plant: new THREE.MeshStandardMaterial({
     color: '#1a3a22',
     emissive: '#3d9a4a',
-    emissiveIntensity: 0.6,
+    emissiveIntensity: 0.22,
     roughness: 0.85,
   }),
   intake: new THREE.MeshStandardMaterial({ color: '#5c636a', roughness: 0.42, metalness: 0.5 }),
@@ -398,6 +391,9 @@ const COAT: readonly CoatEntry[] = [
   coatEntry(MAT.regolith),
 ];
 
+/** Last applied coat amount — skip GPU uploads when the storm has not moved. */
+let lastCoat = -1;
+
 /**
  * Lerp shared hardware toward a dusty coat. Absolute from the clear-sol
  * snapshot so successive frames do not accumulate. Call from the frame loop.
@@ -405,14 +401,18 @@ const COAT: readonly CoatEntry[] = [
  */
 export function applyDustCoat(amount: number): void {
   const a = clamp(amount, 0, 1);
+  if (Math.abs(a - lastCoat) < 0.008) {
+    return;
+  }
+  lastCoat = a;
   for (let i = 0; i < COAT.length; i += 1) {
     const e = COAT[i];
     if (!e) {
       continue;
     }
-    e.mat.color.copy(e.color).lerp(DUST, a * 0.78);
-    e.mat.roughness = e.roughness + (1 - e.roughness) * a * 0.8;
-    e.mat.metalness = e.metalness * (1 - a * 0.85);
+    e.mat.color.copy(e.color).lerp(DUST, a * 0.62);
+    e.mat.roughness = e.roughness + (1 - e.roughness) * a * 0.65;
+    e.mat.metalness = e.metalness * (1 - a * 0.72);
     if (e.clearcoat !== null && e.mat instanceof THREE.MeshPhysicalMaterial) {
       e.mat.clearcoat = e.clearcoat * (1 - a * 0.85);
     }
@@ -444,7 +444,7 @@ export function bindCanvasMaps(): void {
   if (padN) {
     padN.repeat.set(3, 4);
     MAT.pad.normalMap = padN;
-    MAT.pad.normalScale = new THREE.Vector2(0.55, 0.55);
+    MAT.pad.normalScale = new THREE.Vector2(0.32, 0.32);
     MAT.pad.needsUpdate = true;
   }
   const steelN = buildSteelNormal();
@@ -452,11 +452,11 @@ export function bindCanvasMaps(): void {
   if (steelN) {
     steelN.repeat.set(4, 2);
     MAT.steel.normalMap = steelN;
-    MAT.steel.normalScale = new THREE.Vector2(0.35, 0.35);
+    MAT.steel.normalScale = new THREE.Vector2(0.22, 0.22);
     MAT.rustSteel.normalMap = steelN;
-    MAT.rustSteel.normalScale = new THREE.Vector2(0.45, 0.45);
+    MAT.rustSteel.normalScale = new THREE.Vector2(0.28, 0.28);
     MAT.ch4Tank.normalMap = steelN;
-    MAT.ch4Tank.normalScale = new THREE.Vector2(0.22, 0.22);
+    MAT.ch4Tank.normalScale = new THREE.Vector2(0.12, 0.12);
     MAT.ch4Tank.needsUpdate = true;
   }
   if (steelR) {
@@ -469,9 +469,9 @@ export function bindCanvasMaps(): void {
   MAT.rustSteel.needsUpdate = true;
   const gravel = buildGravelNormal();
   if (gravel) {
-    gravel.repeat.set(28, 28);
+    gravel.repeat.set(14, 14);
     MAT.regolith.normalMap = gravel;
-    MAT.regolith.normalScale = new THREE.Vector2(0.58, 0.58);
+    MAT.regolith.normalScale = new THREE.Vector2(0.28, 0.28);
     MAT.regolith.needsUpdate = true;
   }
   mapsBound = true;

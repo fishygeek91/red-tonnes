@@ -26,7 +26,7 @@ const SHIP_MAT = {
   windowBand: new THREE.MeshStandardMaterial({
     color: '#1a1712',
     emissive: '#ffd9a0',
-    emissiveIntensity: 1.8,
+    emissiveIntensity: 0.45,
     roughness: 0.4,
   }),
 };

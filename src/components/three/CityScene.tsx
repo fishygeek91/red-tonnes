@@ -14,15 +14,14 @@
 
 import { OrbitControls, Stars } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Bloom, EffectComposer, N8AO, SMAA } from '@react-three/postprocessing';
+import { Bloom, EffectComposer, N8AO } from '@react-three/postprocessing';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useGraphicsTier } from '../../hooks/useGraphicsTier';
 import { useNarrowViewport } from '../../hooks/useNarrowViewport';
 import { rngFromSeed, rngNext, type RngState } from '../../lib/rng';
-import { getSite, opticalDepthAtSol, SITES, type Site } from '../../lib/sites';
+import { getSite, SITES, type Site } from '../../lib/sites';
 import { inspect } from '../../lib/sim/inspect';
-import { sunlightFraction } from '../../lib/sim/step';
 import { clamp } from '../../lib/types';
 import { useSimStore, type GraphicsQuality } from '../../store/useSimStore';
 import { DustRig } from './atmosphere';
@@ -45,7 +44,7 @@ import {
   spaceFromZoom,
   targetBlendFromZoom,
 } from './orbit';
-import { buildTerrainGeometry, siteLook, SUN_DIR, terrainHeight } from './regolith';
+import { buildTerrainGeometry, siteLook, terrainHeight } from './regolith';
 import { Pick } from './Pick';
 import { Settlement } from './Settlement';
 import { Starships } from './Starships';
@@ -292,19 +291,61 @@ function Rover(): React.ReactElement {
   );
 }
 
+/** True when a postprocessing pass exposes an `enabled` flag we can toggle. */
+function isTogglePass(value: object | null): value is { enabled: boolean } {
+  return value !== null && 'enabled' in value && typeof value.enabled === 'boolean';
+}
+
 /**
  * Always present through a composer. PMREM / orbit camera writes can leave
  * the default framebuffer unbound; without a composer the canvas stays black
- * on phones and in planet view. Rich passes stay city + medium/high only.
+ * on phones and in planet view.
+ *
+ * Passes stay mounted so zoom does not rebuild the composer. N8AO is high-only
+ * and shuts off while the camera is moving — SSAO on a dolly is the hitch.
  */
-function SceneFX(props: { tier: GraphicsQuality; city: boolean }): React.ReactElement {
-  const rich = props.city && props.tier !== 'low';
-  const high = props.city && props.tier === 'high';
+function SceneFX(props: { tier: GraphicsQuality }): React.ReactElement {
+  const ao = useRef<object | null>(null);
+  const bloom = useRef<object | null>(null);
+  const rich = props.tier !== 'low';
+  const high = props.tier === 'high';
+  useFrame(() => {
+    const city = ORBIT.t < 0.42;
+    const still = !ORBIT.busy;
+    const aoPass = ao.current;
+    if (isTogglePass(aoPass)) {
+      aoPass.enabled = high && city && still;
+    }
+    const bloomPass = bloom.current;
+    if (isTogglePass(bloomPass)) {
+      bloomPass.enabled = rich && city && still;
+    }
+  });
   return (
-    <EffectComposer multisampling={high ? 4 : 0}>
-      {high ? <N8AO aoRadius={2.2} intensity={1.05} quality="medium" halfRes color="#2a140c" /> : null}
-      {rich ? <Bloom luminanceThreshold={0.82} mipmapBlur intensity={0.5} radius={0.52} /> : null}
-      {rich ? <SMAA /> : null}
+    <EffectComposer multisampling={0}>
+      {high ? (
+        <N8AO
+          ref={(pass) => {
+            ao.current = pass;
+          }}
+          aoRadius={1.6}
+          intensity={0.45}
+          quality="performance"
+          halfRes
+          color="#2a140c"
+        />
+      ) : null}
+      {rich ? (
+        <Bloom
+          ref={(pass) => {
+            bloom.current = pass;
+          }}
+          luminanceThreshold={1.05}
+          mipmapBlur
+          intensity={0.18}
+          radius={0.38}
+        />
+      ) : null}
     </EffectComposer>
   );
 }
@@ -358,6 +399,7 @@ function ZoomDirector(props: {
   const t = useRef(CITY_T);
   const lastBand = useRef<ViewBand>('city');
   const pinch = useRef<number | null>(null);
+  const lastCam = useRef(new THREE.Vector3());
 
   useEffect(() => {
     const el = gl.domElement;
@@ -365,6 +407,12 @@ function ZoomDirector(props: {
       e.preventDefault();
       const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       tGoal.current = clamp(tGoal.current + dy * 0.00018, 0, 1);
+    };
+    const onPointerDown = (): void => {
+      ORBIT.drag = true;
+    };
+    const onPointerUp = (): void => {
+      ORBIT.drag = false;
     };
     const onTouchStart = (e: TouchEvent): void => {
       pinch.current = pinchSpan(e);
@@ -384,12 +432,16 @@ function ZoomDirector(props: {
       pinch.current = null;
     };
     el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointerup', onPointerUp);
     el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     el.addEventListener('touchend', onTouchEnd);
     el.addEventListener('touchcancel', onTouchEnd);
     return () => {
       el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
@@ -411,6 +463,9 @@ function ZoomDirector(props: {
       : distanceFromZoom(zoom);
     ORBIT.t = zoom;
     ORBIT.space = space;
+    const camMoved = lastCam.current.distanceToSquared(state.camera.position) > 0.004;
+    lastCam.current.copy(state.camera.position);
+    ORBIT.busy = ORBIT.drag || Math.abs(tGoal.current - t.current) > 0.0006 || camMoved;
     SCRATCH_TARGET.copy(CITY_TARGET).lerp(GLOBE_CENTER, framed ? 1 : blend);
     const c = isDolly(state.controls) ? state.controls : null;
     if (c) {
@@ -467,16 +522,50 @@ function CityLayer(props: { children: React.ReactNode }): React.ReactElement {
   return <group ref={group}>{props.children}</group>;
 }
 
+/** Keep the globe in the graph so zoom does not hitch on a 96-segment sphere. */
+function GlobeLayer(props: { children: React.ReactNode }): React.ReactElement {
+  const group = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (group.current) {
+      group.current.visible = ORBIT.t >= 0.38;
+    }
+  });
+  return <group ref={group}>{props.children}</group>;
+}
+
+/** Stars stay mounted; visibility follows space so the climb does not rebuild them. */
+function StarsLayer(props: { count: number }): React.ReactElement {
+  const group = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (group.current) {
+      group.current.visible = ORBIT.space > 0.12;
+    }
+  });
+  return (
+    <group ref={group} visible={false}>
+      <Stars
+        radius={12000}
+        depth={4000}
+        count={props.count}
+        factor={6}
+        saturation={0}
+        fade
+        speed={0.15}
+      />
+    </group>
+  );
+}
+
 /** Dossier for a pin on the orbital globe. */
 function SiteDossier(props: {
   site: Site;
   home: boolean;
-  sol: number;
   onDropToCity: () => void;
   onLandHere: () => void;
   onChooseCargo: () => void;
   onClose: () => void;
 }): React.ReactElement {
+  const sol = useSimStore((s) => s.sim.sol);
   const narrow = useNarrowViewport();
   const chrome = narrow
     ? 'absolute inset-x-2 bottom-2 w-auto'
@@ -533,7 +622,7 @@ function SiteDossier(props: {
       ) : (
         <div className="space-y-1.5">
           <p className="text-[9px] text-[var(--dim)] leading-snug">
-            Abandons this city at sol {props.sol}. Mass cannot teleport — a new
+            Abandons this city at sol {sol}. Mass cannot teleport — a new
             landing starts a new ledger. Same seed and first-window cargo unless
             you pick cargo first.
           </p>
@@ -562,7 +651,6 @@ export function CityScene(): React.ReactElement {
   const setInspect = useSimStore((s) => s.setInspect);
   const inspectId = useSimStore((s) => s.inspectId);
   const siteId = useSimStore((s) => s.sim.siteId);
-  const sol = useSimStore((s) => s.sim.sol);
   const runLog = useSimStore((s) => s.runLog);
   const newGame = useSimStore((s) => s.newGame);
   const openSetupAtSite = useSimStore((s) => s.openSetupAtSite);
@@ -570,7 +658,6 @@ export function CityScene(): React.ReactElement {
   const setFocusId = useSimStore((s) => s.setGlobeFocus);
   const viewIntent = useSimStore((s) => s.viewIntent);
   const setViewIntent = useSimStore((s) => s.setViewIntent);
-  const scrubSol = useSimStore((s) => s.scrubSol);
   const narrow = useNarrowViewport();
   const tier = useGraphicsTier();
   const [band, setBand] = useState<ViewBand>('city');
@@ -582,18 +669,6 @@ export function CityScene(): React.ReactElement {
   const inCity = band === 'city';
   const inOrbit = band === 'orbit';
   const low = tier === 'low';
-  const history = useSimStore((s) => s.sim.history);
-  const siteDust = homeSite.dustFactor;
-  const orbitDust = useMemo(() => {
-    const snap =
-      history.length === 0
-        ? undefined
-        : scrubSol === null
-          ? history[history.length - 1]
-          : history[clamp(scrubSol - 1, 0, history.length - 1)];
-    const tau = snap ? snap.tau : opticalDepthAtSol(sol, false, siteDust);
-    return 1 - clamp(sunlightFraction(tau) / 0.5, 0, 1);
-  }, [history, scrubSol, sol, siteDust]);
 
   useEffect(() => {
     if (!inCity) {
@@ -640,13 +715,14 @@ export function CityScene(): React.ReactElement {
     <div className="flex-1 relative min-w-0 min-h-0">
       <Canvas
         shadows={!low}
-        dpr={tier === 'high' ? [1, 2] : [1, 1.5]}
+        dpr={[1, 1.5]}
         camera={{ position: [18, 9, 20], fov: 40, near: 0.12, far: 16000 }}
         gl={{ antialias: !low, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1 }}
-        resize={{ debounce: 0 }}
+        resize={{ debounce: 80 }}
         style={{ background: '#1c0f0d' }}
         onCreated={(state) => {
           state.gl.toneMapping = THREE.ACESFilmicToneMapping;
+          state.gl.shadowMap.type = THREE.PCFShadowMap;
           const cam = state.camera;
           if (isPerspective(cam) && state.size.height > 0) {
             cam.aspect = state.size.width / state.size.height;
@@ -662,17 +738,7 @@ export function CityScene(): React.ReactElement {
         <ambientLight intensity={0.22} />
         <ZoomDirector tGoal={tGoal} lookDir={lookDir} onBand={setBand} />
         <DustRig />
-        {inCity ? null : (
-          <Stars
-            radius={12000}
-            depth={4000}
-            count={low ? 800 : 2800}
-            factor={6}
-            saturation={0}
-            fade
-            speed={0.15}
-          />
-        )}
+        <StarsLayer count={low ? 500 : 900} />
         <CityLayer>
           <Terrain />
           <Rocks />
@@ -682,7 +748,7 @@ export function CityScene(): React.ReactElement {
             <Rover />
           </Pick>
         </CityLayer>
-        {inCity ? null : (
+        <GlobeLayer>
           <group position={[0, -MARS_RADIUS - 1.4, 0]} quaternion={pole}>
             <MarsBody
               radius={MARS_RADIUS}
@@ -695,12 +761,10 @@ export function CityScene(): React.ReactElement {
               pinSize={16}
               labelDistanceFactor={120}
               atmoStrength={1}
-              dustAmount={orbitDust}
-              sunDir={SUN_DIR}
               onPickSite={(s) => setFocusId(s.id)}
             />
           </group>
-        )}
+        </GlobeLayer>
         <OrbitControls
           makeDefault
           target={[7, 1.1, -8]}
@@ -712,7 +776,7 @@ export function CityScene(): React.ReactElement {
           dampingFactor={0.08}
           enableZoom={false}
         />
-        <SceneFX tier={tier} city={inCity} />
+        <SceneFX tier={tier} />
       </Canvas>
       <div className="absolute inset-0 pointer-events-none scene-vignette" />
       <button
@@ -756,7 +820,6 @@ export function CityScene(): React.ReactElement {
         <SiteDossier
           site={focusSite}
           home={focusSite.id === siteId}
-          sol={sol}
           onDropToCity={() => goTo(CITY_T)}
           onLandHere={() => {
             newGame(runLog.seed, focusSite.id, runLog.templateId);

@@ -29,19 +29,37 @@ export const CITY_TARGET = new THREE.Vector3(7, 1.1, -8);
 /** Polar cap so the city camera cannot duck under the dirt. */
 export const CITY_POLAR = Math.PI / 2.15;
 
-/** Shared per-frame orbit read by the sky, fog, and globe. */
+/** Shared per-frame orbit read by the sky, fog, globe, and FX. */
 export interface OrbitShare {
   /** Log-zoom in [0, 1]: 0 = street, 1 = wide planet. */
   t: number;
   /** 0 = surface weather, 1 = deep space. Smoothstep of t. */
   space: number;
+  /** True while the wheel/pinch is catching up or the user is dragging. */
+  busy: boolean;
+  /** Pointer is down on the canvas (orbit rotate). */
+  drag: boolean;
+  /** Storm mix 0–1, written by DustRig so the globe need not subscribe to history. */
+  dust: number;
+  /** Normalized insolation 0–1 after dust. Written by DustRig each frame. */
+  daylight: number;
+  /** Live (or scrubbed) optical depth. Written by DustRig each frame. */
+  tau: number;
 }
 
 /**
  * Live altitude share. ZoomDirector writes it every frame; the sky, fog,
  * and globe read it. A module singleton so we never mutate a React prop.
  */
-export const ORBIT: OrbitShare = { t: 0, space: 0 };
+export const ORBIT: OrbitShare = {
+  t: 0,
+  space: 0,
+  busy: false,
+  drag: false,
+  dust: 0,
+  daylight: 1,
+  tau: 0.4,
+};
 
 /** Which band the camera is in — used for UI, FX, and pickable pins. */
 export type ViewBand = 'city' | 'climb' | 'orbit';

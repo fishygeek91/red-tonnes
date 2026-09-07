@@ -161,7 +161,7 @@ export const useSimStore = create<SimStore>((set, get) => ({
   globeFocusId: null,
   viewIntent: null,
   pendingSetupSiteId: null,
-  graphicsQuality: 'high',
+  graphicsQuality: 'medium',
 
   newGame: (seed, siteId, templateId) => {
     set({

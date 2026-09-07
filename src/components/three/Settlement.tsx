@@ -9,15 +9,15 @@
 import { useFrame } from '@react-three/fiber';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useGraphicsTier } from '../../hooks/useGraphicsTier';
+import { useShallow } from 'zustand/react/shallow';
 import { LOX_TO_CH4_RATIO } from '../../lib/constants';
 import { STRUCTURES } from '../../lib/structures';
 import { clamp, safeDiv } from '../../lib/types';
-import { sunlightFraction } from '../../lib/sim/step';
 import type { SimState, SolSnapshot } from '../../lib/sim/state';
 import { useSimStore } from '../../store/useSimStore';
 import { Band, BeaconLamp, Pipe, PipedRun, Row, Stack } from './kit';
 import { MAT } from './materials';
+import { ORBIT } from './orbit';
 import { LAYOUT, SUN_DIR } from './regolith';
 import { Pick } from './Pick';
 
@@ -298,7 +298,34 @@ function SabatierSkid(): React.ReactElement {
 }
 
 /** Cryo tank farm with live CH4 / LOX / water fills and a pump skid. */
-function CryoFarm(props: { ch4Fill: number; loxFill: number; waterFill: number }): React.ReactElement {
+function CryoFarm(): React.ReactElement {
+  const ch4 = useRef<THREE.Mesh>(null);
+  const lox = useRef<THREE.Mesh>(null);
+  const water = useRef<THREE.Mesh>(null);
+  useFrame(() => {
+    const { sim, scrubSol } = useSimStore.getState();
+    const cryoCap = Math.max(1, (sim.structures.cryoPlant ?? 0) * STRUCTURES.cryoPlant.capacityValue);
+    const snap = viewSnapshot(sim, scrubSol);
+    const scrubbing = scrubSol !== null && snap !== undefined;
+    const ch4Kg = scrubbing ? snap.methaloxKg / (1 + LOX_TO_CH4_RATIO) : sim.inv.ch4Kg;
+    const loxKg = scrubbing ? snap.methaloxKg - ch4Kg : sim.inv.loxKg;
+    const waterKg = scrubbing ? snap.waterKg : sim.inv.waterKg;
+    const ch4Fill = clamp(safeDiv(ch4Kg, cryoCap * 0.22), 0.02, 1);
+    const loxFill = clamp(safeDiv(loxKg, cryoCap * 0.78), 0.02, 1);
+    const waterFill = clamp(safeDiv(waterKg, 100000), 0.05, 1);
+    if (ch4.current) {
+      ch4.current.scale.set(1.01, ch4Fill, 1.01);
+      ch4.current.position.y = 0.15 + ch4Fill * 1.5;
+    }
+    if (lox.current) {
+      lox.current.scale.set(1.01, loxFill, 1.01);
+      lox.current.position.y = 0.15 + loxFill * 1.5;
+    }
+    if (water.current) {
+      const r = 1.3 * (0.6 + waterFill * 0.4);
+      water.current.scale.setScalar(r);
+    }
+  });
   return (
     <group position={[LAYOUT.cryoX, 0, LAYOUT.cryoZ]}>
       <group position={[0, 0, 0]}>
@@ -308,7 +335,7 @@ function CryoFarm(props: { ch4Fill: number; loxFill: number; waterFill: number }
         <Band y={0.7} radius={1.42} />
         <Band y={1.6} radius={1.42} />
         <Band y={2.5} radius={1.42} />
-        <mesh position={[0, 0.15 + props.ch4Fill * 1.5, 0]} scale={[1.01, props.ch4Fill, 1.01]} material={MAT.frost}>
+        <mesh ref={ch4} position={[0, 1.65, 0]} scale={[1.01, 0.5, 1.01]} material={MAT.frost}>
           <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
         </mesh>
       </group>
@@ -319,12 +346,12 @@ function CryoFarm(props: { ch4Fill: number; loxFill: number; waterFill: number }
         <Band y={0.7} radius={1.42} />
         <Band y={1.6} radius={1.42} />
         <Band y={2.5} radius={1.42} />
-        <mesh position={[0, 0.15 + props.loxFill * 1.5, 0]} scale={[1.01, props.loxFill, 1.01]} material={MAT.frost}>
+        <mesh ref={lox} position={[0, 1.65, 0]} scale={[1.01, 0.5, 1.01]} material={MAT.frost}>
           <cylinderGeometry args={[1.41, 1.41, 3.0, 20]} />
         </mesh>
       </group>
-      <mesh position={[7.2, 1.2, 0]} material={MAT.waterDome} receiveShadow>
-        <sphereGeometry args={[1.3 * (0.6 + props.waterFill * 0.4), 24, 24]} />
+      <mesh ref={water} position={[7.2, 1.2, 0]} material={MAT.waterDome} receiveShadow>
+        <sphereGeometry args={[1, 16, 12]} />
       </mesh>
       <mesh position={[1.8, 0.35, 1.8]} material={MAT.steel} castShadow>
         <boxGeometry args={[1.6, 0.7, 1.1]} />
@@ -398,7 +425,6 @@ function HabitatCutaway(props: { position: [number, number, number]; linked: boo
       <mesh position={[0.55, 0.15, -0.55]} material={MAT.habitatWindow}>
         <boxGeometry args={[0.18, 0.22, 0.12]} />
       </mesh>
-      <pointLight color="#ffd9a0" intensity={6.5} distance={7} position={[0.15, 0.4, 0.2]} />
       <HabitatKit linked={props.linked} />
     </group>
   );
@@ -433,7 +459,7 @@ function CropStands(props: { length: number }): React.ReactElement {
   for (let x = -props.length / 2 + 0.7; x <= props.length / 2 - 0.7; x += step) {
     for (const z of [-0.36, 0.36]) {
       items.push(
-        <mesh key={`p-${n}`} position={[x, 0.28, z]} material={MAT.plant} castShadow>
+        <mesh key={`p-${n}`} position={[x, 0.28, z]} material={MAT.plant}>
           <coneGeometry args={[0.13, 0.38, 5]} />
         </mesh>,
       );
@@ -447,21 +473,15 @@ function CropStands(props: { length: number }): React.ReactElement {
 function GreenhouseStreet(props: {
   position: [number, number, number];
   length: number;
-  glow: number;
   rigid: boolean;
 }): React.ReactElement {
   const shell = useRef<THREE.MeshStandardMaterial>(null);
-  const tier = useGraphicsTier();
-  const high = tier === 'high';
   useFrame(() => {
+    const glow = clamp(ORBIT.daylight, 0.05, 1);
     if (shell.current) {
-      // The shell is a window, not a lamp — crops carry the street's glow.
-      // Medium/low film is more opaque, so it keeps a little more of its own light.
-      shell.current.emissiveIntensity = high
-        ? 0.03 + props.glow * 0.18
-        : 0.05 + props.glow * 0.35;
+      shell.current.emissiveIntensity = 0.03 + glow * 0.12;
     }
-    MAT.plant.emissiveIntensity = 0.28 + props.glow * 1.15;
+    MAT.plant.emissiveIntensity = 0.08 + glow * 0.28;
   });
   const ribs: React.ReactElement[] = [];
   const step = props.rigid ? 1.6 : 2.1;
@@ -476,37 +496,16 @@ function GreenhouseStreet(props: {
     <group position={props.position}>
       <mesh rotation={[0, 0, Math.PI / 2]}>
         <cylinderGeometry args={[1.1, 1.1, props.length, 24, 1, false, 0, Math.PI]} />
-        {high ? (
-          <meshPhysicalMaterial
-            ref={shell}
-            color={props.rigid ? '#2a3834' : '#2a3c2c'}
-            roughness={props.rigid ? 0.08 : 0.32}
-            metalness={0}
-            transparent
-            opacity={props.rigid ? 0.7 : 0.5}
-            depthWrite={false}
-            side={THREE.DoubleSide}
-            // N8AO + EffectComposer has no transmission buffer — physical film, not a black shell.
-            transmission={0}
-            clearcoat={props.rigid ? 0.42 : 0.08}
-            clearcoatRoughness={props.rigid ? 0.1 : 0.55}
-            attenuationColor="#3d9a4a"
-            emissive="#59c96a"
-            emissiveIntensity={0.05}
-          />
-        ) : (
-          <meshStandardMaterial
-            ref={shell}
-            color={props.rigid ? '#2a3834' : '#2a3c2c'}
-            roughness={props.rigid ? 0.12 : 0.22}
-            metalness={props.rigid ? 0.15 : 0}
-            transparent
-            opacity={props.rigid ? 0.82 : 0.68}
-            depthWrite={false}
-            emissive="#59c96a"
-            emissiveIntensity={0.1}
-          />
-        )}
+        <meshStandardMaterial
+          ref={shell}
+          color={props.rigid ? '#2a3834' : '#2a3c2c'}
+          roughness={props.rigid ? 0.12 : 0.22}
+          metalness={props.rigid ? 0.15 : 0}
+          transparent
+          opacity={props.rigid ? 0.78 : 0.7}
+          emissive="#59c96a"
+          emissiveIntensity={0.06}
+        />
       </mesh>
       {ribs}
       <mesh position={[0, 0.06, 0.36]} material={MAT.deck}>
@@ -525,15 +524,19 @@ function GreenhouseStreet(props: {
       <mesh position={[props.length / 2 + 0.35, 0.05, 0]} rotation={[0, 0, Math.PI / 2]} material={MAT.steel} castShadow>
         <cylinderGeometry args={[0.38, 0.38, 0.55, 10]} />
       </mesh>
-      {high ? (
-        <pointLight color="#59c96a" intensity={props.glow * 3} distance={7} position={[0, 0.8, 0]} />
-      ) : null}
     </group>
   );
 }
 
 /** Buried LED hall: berm, glowing portal, vent stacks. */
-function BuriedHall(props: { position: [number, number, number]; glow: number }): React.ReactElement {
+function BuriedHall(props: { position: [number, number, number] }): React.ReactElement {
+  const portal = useRef<THREE.MeshStandardMaterial>(null);
+  useFrame(() => {
+    if (portal.current) {
+      const glow = clamp(ORBIT.daylight, 0.05, 1);
+      portal.current.emissiveIntensity = 0.35 + glow * 0.35;
+    }
+  });
   return (
     <group position={props.position}>
       <mesh position={[0, 0.7, 0]} material={MAT.berm} castShadow receiveShadow>
@@ -541,7 +544,12 @@ function BuriedHall(props: { position: [number, number, number]; glow: number })
       </mesh>
       <mesh position={[2.15, 0.5, 0]}>
         <boxGeometry args={[0.55, 1.05, 1.25]} />
-        <meshStandardMaterial color="#183820" emissive="#59c96a" emissiveIntensity={1.4 + props.glow * 0.8} />
+        <meshStandardMaterial
+          ref={portal}
+          color="#183820"
+          emissive="#59c96a"
+          emissiveIntensity={0.5}
+        />
       </mesh>
       <Stack position={[-0.8, 1.4, 0.9]} height={0.9} radius={0.1} />
       <Stack position={[-0.2, 1.5, -1.0]} height={0.7} radius={0.08} />
@@ -653,26 +661,11 @@ function FabShop(): React.ReactElement {
 
 /** All the buildings, derived from structure counts + live inventories. */
 export function Settlement(): React.ReactElement {
-  const sim = useSimStore((s) => s.sim);
-  const scrubSol = useSimStore((s) => s.scrubSol);
-  const st = sim.structures;
-  const snap = viewSnapshot(sim, scrubSol);
-  const tau = snap ? snap.tau : 0.4;
-  const sun = sunlightFraction(tau);
-  const ghGlow = clamp(sun / 0.5, 0.05, 1);
-  const cryoCap = Math.max(1, st.cryoPlant * STRUCTURES.cryoPlant.capacityValue);
-  const scrubbing = scrubSol !== null && snap !== undefined;
-  const ch4Kg = scrubbing ? snap.methaloxKg / (1 + LOX_TO_CH4_RATIO) : sim.inv.ch4Kg;
-  const loxKg = scrubbing ? snap.methaloxKg - ch4Kg : sim.inv.loxKg;
-  const waterKg = scrubbing ? snap.waterKg : sim.inv.waterKg;
-  const ch4Fill = clamp(safeDiv(ch4Kg, cryoCap * 0.22), 0.02, 1);
-  const loxFill = clamp(safeDiv(loxKg, cryoCap * 0.78), 0.02, 1);
-  const waterFill = clamp(safeDiv(waterKg, 100000), 0.05, 1);
-
+  const st = useSimStore(useShallow((s) => s.sim.structures));
   const flare = useRef<THREE.PointLight>(null);
   useFrame((state) => {
     if (flare.current) {
-      flare.current.intensity = 6 + Math.sin(state.clock.elapsedTime * 1.7) * 1.5;
+      flare.current.intensity = 1.4 + Math.sin(state.clock.elapsedTime * 1.7) * 0.35;
     }
   });
 
@@ -749,7 +742,7 @@ export function Settlement(): React.ReactElement {
 
       {st.cryoPlant > 0 ? (
         <Pick id="cryoPlant">
-          <CryoFarm ch4Fill={ch4Fill} loxFill={loxFill} waterFill={waterFill} />
+          <CryoFarm />
         </Pick>
       ) : null}
 
@@ -771,7 +764,6 @@ export function Settlement(): React.ReactElement {
             key={`ghi-${i}`}
             position={[2 + i * 3.2, 0, -6]}
             length={10}
-            glow={ghGlow}
             rigid={false}
           />
         ))}
@@ -782,14 +774,13 @@ export function Settlement(): React.ReactElement {
             key={`ghr-${i}`}
             position={[2 + i * 3.2, 0, -10]}
             length={8}
-            glow={ghGlow}
             rigid
           />
         ))}
       </Pick>
       <Pick id="ghBuried">
         {Array.from({ length: st.ghBuried }, (_, i) => (
-          <BuriedHall key={`ghb-${i}`} position={[-8 + i * 5, 0, -8]} glow={ghGlow} />
+          <BuriedHall key={`ghb-${i}`} position={[-8 + i * 5, 0, -8]} />
         ))}
       </Pick>
 

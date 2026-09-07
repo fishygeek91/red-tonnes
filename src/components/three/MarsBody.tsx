@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import type { Site } from '../../lib/sites';
 import { SITES } from '../../lib/sites';
 import { fbm, noise2 } from './regolith';
+import { ORBIT } from './orbit';
 
 /** Color + linear bump painted once per session (sidebar + city share it). */
 export interface MarsMaps {
@@ -265,7 +266,7 @@ export function MarsBody(props: MarsBodyProps): React.ReactElement {
       marker.current.scale.setScalar(pulse);
     }
     atmoUniforms.strength.value = props.atmoStrength ?? 1;
-    atmoUniforms.dust.value = props.dustAmount ?? 0;
+    atmoUniforms.dust.value = props.dustAmount ?? ORBIT.dust;
     atmoUniforms.sunDir.value.copy(props.sunDir ?? SIDEBAR_SUN);
   });
   /* eslint-enable react-hooks/immutability */

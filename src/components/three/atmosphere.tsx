@@ -225,7 +225,7 @@ function DustParticles(): React.ReactElement {
       matRef.current.opacity += (targetOpacity - matRef.current.opacity) * Math.min(1, delta * 2);
     }
     const attr = attrRef.current;
-    if (!attr || targetOpacity <= 0.001 || ORBIT.busy) {
+    if (!attr || targetOpacity <= 0.001) {
       return;
     }
     const wind = (3 + ORBIT.tau * 9) * delta;
@@ -299,7 +299,7 @@ function DustDevil(props: {
       matRef.current.opacity += (strength * 0.7 - matRef.current.opacity) * Math.min(1, delta * 2);
     }
     const attr = attrRef.current;
-    if (!attr || strength <= 0.01 || ORBIT.busy) {
+    if (!attr || strength <= 0.01) {
       return;
     }
     const t = state.clock.elapsedTime * 0.07 + props.seed * 0.01;
@@ -451,10 +451,10 @@ export function DustRig(): React.ReactElement {
     MAT.beacon.emissiveIntensity = pulse;
     const space = ORBIT.space;
     const k = Math.min(1, delta * 1.5);
+    // Always apply: it early-outs below a 0.008 change, and skipping while
+    // scrolling caused a visible color pop the moment the camera settled.
     coat.current += (1 - daylight - coat.current) * k;
-    if (!ORBIT.busy) {
-      applyDustCoat(coat.current);
-    }
+    applyDustCoat(coat.current);
     const freezeShadows = ORBIT.busy || space > 0.35;
     if (freezeShadows !== shadowsFrozen.current) {
       shadowsFrozen.current = freezeShadows;

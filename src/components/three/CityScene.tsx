@@ -12,7 +12,7 @@
  * steel reads as steel.
  */
 
-import { OrbitControls, Stars } from '@react-three/drei';
+import { OrbitControls, Preload, Stars } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Bloom, EffectComposer, N8AO } from '@react-three/postprocessing';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -311,14 +311,16 @@ function SceneFX(props: { tier: GraphicsQuality }): React.ReactElement {
   const high = props.tier === 'high';
   useFrame(() => {
     const city = ORBIT.t < 0.42;
-    const still = !ORBIT.busy;
     const aoPass = ao.current;
     if (isTogglePass(aoPass)) {
-      aoPass.enabled = high && city && still;
+      // AO alone waits for stillness — SSAO on a moving camera shimmers.
+      aoPass.enabled = high && city && !ORBIT.busy;
     }
     const bloomPass = bloom.current;
     if (isTogglePass(bloomPass)) {
-      bloomPass.enabled = rich && city && still;
+      // Bloom stays on for the whole city band: toggling it mid-scroll
+      // pops the scene brightness, which reads as a glitch.
+      bloomPass.enabled = rich && city;
     }
   });
   return (
@@ -400,13 +402,27 @@ function ZoomDirector(props: {
   const lastBand = useRef<ViewBand>('city');
   const pinch = useRef<number | null>(null);
   const lastCam = useRef(new THREE.Vector3());
+  const busyUntil = useRef(0);
 
   useEffect(() => {
     const el = gl.domElement;
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault();
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      tGoal.current = clamp(tGoal.current + dy * 0.00018, 0, 1);
+      // Normalize across delta modes: pixels (0), lines (1, Firefox), pages (2).
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) {
+        dy *= 40;
+      } else if (e.deltaMode === 2) {
+        dy *= 400;
+      }
+      // macOS trackpad pinch arrives as ctrl+wheel with tiny deltas.
+      if (e.ctrlKey) {
+        dy *= 5;
+      }
+      // Cap one event so a free-spinning wheel cannot teleport the camera.
+      dy = clamp(dy, -320, 320);
+      tGoal.current = clamp(tGoal.current + dy * 0.0002, 0, 1);
+      busyUntil.current = performance.now() + 140;
     };
     const onPointerDown = (): void => {
       ORBIT.drag = true;
@@ -427,6 +443,7 @@ function ZoomDirector(props: {
       const ratio = span / pinch.current;
       tGoal.current = clamp(tGoal.current - Math.log(ratio) * 0.4, 0, 1);
       pinch.current = span;
+      busyUntil.current = performance.now() + 140;
     };
     const onTouchEnd = (): void => {
       pinch.current = null;
@@ -453,7 +470,14 @@ function ZoomDirector(props: {
     if (state.size.width < 8 || state.size.height < 8) {
       return;
     }
-    t.current += (tGoal.current - t.current) * (1 - Math.exp(-delta * 3.6));
+    // Snap the tail: below half a scroll notch of error, land exactly on the goal
+    // so `busy` does not linger after the gesture ends.
+    const err = tGoal.current - t.current;
+    if (Math.abs(err) < 0.004) {
+      t.current = tGoal.current;
+    } else {
+      t.current += err * (1 - Math.exp(-delta * 7));
+    }
     const zoom = t.current;
     const space = spaceFromZoom(zoom);
     const blend = targetBlendFromZoom(zoom);
@@ -463,9 +487,15 @@ function ZoomDirector(props: {
       : distanceFromZoom(zoom);
     ORBIT.t = zoom;
     ORBIT.space = space;
-    const camMoved = lastCam.current.distanceToSquared(state.camera.position) > 0.004;
+    // Movement threshold is relative to camera distance so it neither flickers
+    // in the city nor sticks on at planet scale; a short hold debounces it.
+    const moveSq = lastCam.current.distanceToSquared(state.camera.position);
     lastCam.current.copy(state.camera.position);
-    ORBIT.busy = ORBIT.drag || Math.abs(tGoal.current - t.current) > 0.0006 || camMoved;
+    const now = performance.now();
+    if (moveSq > dist * dist * 4e-8) {
+      busyUntil.current = Math.max(busyUntil.current, now + 120);
+    }
+    ORBIT.busy = ORBIT.drag || t.current !== tGoal.current || now < busyUntil.current;
     SCRATCH_TARGET.copy(CITY_TARGET).lerp(GLOBE_CENTER, framed ? 1 : blend);
     const c = isDolly(state.controls) ? state.controls : null;
     if (c) {
@@ -777,6 +807,9 @@ export function CityScene(): React.ReactElement {
           enableZoom={false}
         />
         <SceneFX tier={tier} />
+        {/* Compile shaders and upload textures for hidden layers (globe, stars)
+            on mount so the first zoom-out does not hitch on a GPU upload. */}
+        <Preload all />
       </Canvas>
       <div className="absolute inset-0 pointer-events-none scene-vignette" />
       <button

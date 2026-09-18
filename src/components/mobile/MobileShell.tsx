@@ -7,6 +7,7 @@
 
 import { BuildPanel } from '../BuildPanel';
 import { EndBanner } from '../EndBanner';
+import { FlightDirector } from '../FlightDirector';
 import { GhostHud } from '../GhostHud';
 import { Ledgers } from '../Ledgers';
 import { SharedRunNotice } from '../SharedRunNotice';
@@ -49,7 +50,12 @@ export function MobileShell(props: { city: React.ReactNode }): React.ReactElemen
           onClose={() => setMobileSheet(null)}
           scrollBody={false}
         >
-          <Ledgers className="w-full h-full min-h-0 flex-1 border-0" />
+          <div className="h-full min-h-0 flex-1 flex flex-col overflow-y-auto">
+            <div className="p-2 shrink-0">
+              <FlightDirector docked />
+            </div>
+            <Ledgers className="w-full flex-1 min-h-0 border-0" />
+          </div>
         </Sheet>
         <Sheet open={mobileSheet === 'time'} title="Time & trends" onClose={() => setMobileSheet(null)}>
           <div className="flex flex-col gap-3 p-3">

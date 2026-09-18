@@ -82,6 +82,16 @@ step(state, dtSols, actions) => nextState   // src/lib/sim/step.ts
   when your clock crosses them, and their runs draw as dashed lines on the
   Methalox and Loop charts. The final scorecard prints the race verdict.
   No backend: the ghost is derived entirely from the permalink's replay.
+- **Flight Director.** The panel over the city runs the *real engine* one to
+  two synodic windows into the future, silently, and reads out what will
+  actually happen if you change nothing: the departure verdict ("burn MADE on
+  sol 1359 with 269 t of margin" / "MISSED: projected 544 t of 1,000 t"), the
+  sol quota fuel arrives, the sol a caloric deficit begins, and any dust storm
+  on the deterministic climate — with a dashed projected-methalox sparkline
+  against the quota. Because `step` is pure and every draw derives from the
+  seed, the forecast is not an estimate; it is bit-identical to the future
+  (the smoke test proves it). Every build, crop, or slider change refreshes
+  the projection instantly — the panel is the consequence of your plan.
 - **Accident investigations.** A terminal lose (STARVED, STRANDED, BLACKOUT)
   walks the recorded history backwards and names the causal chain — storm
   onset, power shed, ISRU stall, ration exhaustion — as a short NTSB-style
@@ -104,8 +114,11 @@ Other data: `src/lib/sites.ts` (preset sites + dust-storm τ series),
 ## How to demo this in 90 seconds
 
 Load the page — the demo (seed 7, Arcadia Planitia, "Balanced 12-crew") plays
-itself at 20 sols/second. Watch the top bar: two Starships are down, the ice
-mine fills the water tank, and methalox starts climbing. Around sol 420 a
+itself at 20 sols/second. The Flight Director over the city already knows the
+whole run: it calls the sol-456 dust storm, the sol-1124 fuel milestone, and
+the sol-1359 departure burn from the opening sols — point at it and say "that
+is the engine itself, run 1,400 sols ahead". Watch the top bar: two Starships
+are down, the ice mine fills the water tank, and methalox starts climbing. Around sol 420 a
 global dust storm hits — the τ sparkline spikes, solar collapses, greenhouse
 glow dims, and the nuclear floor carries life support while ISRU turns down.
 At sol 759, window 1 lands more plant; compost batches mature and the nitrogen
@@ -124,6 +137,9 @@ npx tsx scripts/smoke.ts
 
 Runs two windows, checks determinism and that no pool goes non-finite,
 verifies the share codec, ghost-racing helpers, accident investigations,
-and the audio-bed parameter map, and prints the mission brief.
+the audio-bed parameter map, and the Flight Director forecast (its projected
+snapshots must be bit-identical to actually living those sols, it must call
+the demo's sol-1359 burn from sol 0, and it must see the "Food first"
+stranding coming from sol 700), and prints the mission brief.
 `npx tsx scripts/verify-ghost.ts` drives a real browser through a shared
 link and a ghost race (needs `npm run dev` or `next start` running).

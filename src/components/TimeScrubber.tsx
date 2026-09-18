@@ -121,7 +121,9 @@ export function TimeScrubber(props: { variant?: 'bar' | 'panel' }): React.ReactE
       </svg>
       <input
         type="range"
-        min={0}
+        // History snapshots start at sol 1 (the engine pushes after the clock
+        // advances): a sol-0 scrub would silently show live numbers instead.
+        min={h.length > 0 ? h[0].sol : 0}
         max={Math.max(1, sim.sol)}
         value={viewSol}
         onChange={(e) => {
@@ -130,6 +132,7 @@ export function TimeScrubber(props: { variant?: 'bar' | 'panel' }): React.ReactE
         }}
         className={`absolute inset-x-0 bottom-0 w-full ${panel ? 'h-8' : 'h-3'}`}
         title="Scrub history (release at the right edge to return to live)"
+        aria-label="Timeline scrubber, sols"
       />
     </div>
   );

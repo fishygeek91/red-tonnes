@@ -76,6 +76,11 @@ function isNonNegativeNumber(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0;
 }
 
+/** True when the value is a finite, non-negative integer. */
+function isNonNegativeInteger(value: unknown): value is number {
+  return isNonNegativeNumber(value) && Number.isInteger(value);
+}
+
 /** True when every value of the record is a finite number. */
 function isNumberRecord(value: unknown): value is Record<string, number> {
   return isRecord(value) && Object.values(value).every(isFiniteNumber);
@@ -91,7 +96,7 @@ function isStructureCounts(value: unknown): value is Manifest['structures'] {
     return false;
   }
   return Object.entries(value).every(
-    ([id, count]) => id in STRUCTURES && isNonNegativeNumber(count),
+    ([id, count]) => id in STRUCTURES && isNonNegativeInteger(count),
   );
 }
 
@@ -108,7 +113,7 @@ function isManifest(value: unknown): value is Manifest {
     isNonNegativeNumber(value.substrateKg) &&
     isNonNegativeNumber(value.fertilizerNKg) &&
     isNonNegativeNumber(value.fertilizerPkKg) &&
-    isNonNegativeNumber(value.crew)
+    isNonNegativeInteger(value.crew)
   );
 }
 
@@ -178,11 +183,17 @@ function isRunLog(value: unknown): value is RunLog {
   if ('daily' in value && value.daily !== undefined && typeof value.daily !== 'string') {
     return false;
   }
-  return (
-    Array.isArray(value.actions) &&
-    value.actions.length <= MAX_ACTIONS &&
-    value.actions.every(isRunAction)
-  );
+  if (!Array.isArray(value.actions) || value.actions.length > MAX_ACTIONS) {
+    return false;
+  }
+  let prevSol = 0;
+  for (const action of value.actions) {
+    if (!isRunAction(action) || action.sol < prevSol) {
+      return false;
+    }
+    prevSol = action.sol;
+  }
+  return true;
 }
 
 /** Encode a run log into a URL-fragment-safe string. */

@@ -59,8 +59,10 @@ function DesktopShell(props: { city: React.ReactNode }): React.ReactElement {
           {props.city}
           <EndBanner />
           <SharedRunNotice />
-          <GhostHud />
+          {/* FlightDirector paints first so GhostHud (and its End-race button)
+              wins pointer priority when the two overlap on narrow desktops. */}
           <FlightDirector />
+          <GhostHud />
         </div>
         <Ledgers />
       </main>

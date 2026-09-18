@@ -12,13 +12,29 @@
  * Desktop: floats top-right over the city. Phone: lives in the Status sheet.
  */
 
-import { useMemo, useState } from "react";
-import type { Forecast, ForecastTone } from "../lib/sim/forecast";
-import { forecastHorizonSols, runForecast } from "../lib/sim/forecast";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Forecast, ForecastDelta, ForecastTone } from "../lib/sim/forecast";
+import { diffForecasts, forecastHorizonSols, runForecast } from "../lib/sim/forecast";
 import { useSimStore } from "../store/useSimStore";
 
-/** Recompute cadence, sols: the forecast refreshes when the clock crosses a bucket (and instantly on any player action, via the action-key deps). */
+/** Recompute cadence, sols: the forecast refreshes when the clock crosses a bucket (and shortly after any player action, via the action-key deps). */
 const REFRESH_SOLS = 20;
+
+/** Refresh bucket at 60×: one projection per real second instead of three. */
+const REFRESH_SOLS_FAST = 60;
+
+/** Debounce for recomputes, ms: a slider drag coalesces into one engine run. */
+const RECOMPUTE_DEBOUNCE_MS = 250;
+
+/** A forecast plus the inputs it was computed from (for delta attribution). */
+interface ComputedForecast {
+  /** The projection. */
+  readonly forecast: Forecast;
+  /** The action key in force when it was computed. */
+  readonly key: string;
+  /** The run seed it belongs to. */
+  readonly seed: number;
+}
 
 /** Sparkline plot-area size in viewBox units. */
 const SPARK_W = 200;
@@ -119,25 +135,76 @@ function FuelProjection(props: { forecast: Forecast }): React.ReactElement | nul
  */
 export function FlightDirector(props: { docked?: boolean } = {}): React.ReactElement | null {
   const sim = useSimStore((s) => s.sim);
+  const speed = useSimStore((s) => s.speed);
+  const playing = useSimStore((s) => s.playing);
+  const ghost = useSimStore((s) => s.ghost);
   const sharedNotice = useSimStore((s) => s.sharedNotice);
+  // During a ghost race the race HUD owns the spotlight (and, on smaller
+  // desktop windows, the same strip of screen): collapse when a race starts.
+  // Render-time state adjustment (the React-endorsed pattern), not an effect.
   const [collapsed, setCollapsed] = useState(false);
+  const ghostActive = ghost !== null;
+  const [wasGhostActive, setWasGhostActive] = useState(ghostActive);
+  if (ghostActive !== wasGhostActive) {
+    setWasGhostActive(ghostActive);
+    if (ghostActive) {
+      setCollapsed(true);
+    }
+  }
 
   // Refresh keys: the sol bucket (time passing) plus every player-actionable
   // input, stringified so the deep-cloned objects compare by value.
-  const solBucket = Math.floor(sim.sol / REFRESH_SOLS);
+  const bucketSols = playing && speed >= REFRESH_SOLS_FAST ? REFRESH_SOLS_FAST : REFRESH_SOLS;
+  const solBucket = Math.floor(sim.sol / bucketSols);
   const actionKey = useMemo(
     () =>
       JSON.stringify([sim.structures, sim.params, sim.cropMix, sim.manifests, sim.population, sim.endState, sim.seed]),
     [sim.structures, sim.params, sim.cropMix, sim.manifests, sim.population, sim.endState, sim.seed],
   );
 
-  const forecast = useMemo(
-    () => runForecast(sim, forecastHorizonSols(sim.sol)),
-    // `sim` is intentionally read fresh only when a key changes: recomputing a
-    // 759-sol projection every rendered sol would be wasted work.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [solBucket, actionKey],
-  );
+  // The projection runs the full engine up to two windows ahead, so it is
+  // debounced: a slider drag (dozens of input events per second) coalesces
+  // into ONE engine run shortly after the drag settles, never one per event.
+  // The callback reads the LIVE state from the store, so the projection is
+  // always taken from the newest sol even after the debounce delay.
+  const [computed, setComputed] = useState<ComputedForecast>(() => ({
+    forecast: runForecast(sim, forecastHorizonSols(sim.sol)),
+    key: actionKey,
+    seed: sim.seed,
+  }));
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const live = useSimStore.getState().sim;
+      setComputed({
+        forecast: runForecast(live, forecastHorizonSols(live.sol)),
+        key: JSON.stringify([live.structures, live.params, live.cropMix, live.manifests, live.population, live.endState, live.seed]),
+        seed: live.seed,
+      });
+    }, RECOMPUTE_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [solBucket, actionKey]);
+  const forecast = computed.forecast;
+
+  // ---- plan delta: what did the player's last order buy? --------------------
+  // When a fresh projection lands under a NEW action key (a build, crop,
+  // slider, or manifest order), diff it against the projection in force
+  // before the order. Both are close in time, so the difference IS the
+  // order's consequence.
+  const prevRef = useRef<ComputedForecast | null>(null);
+  const [delta, setDelta] = useState<{ delta: ForecastDelta; atSol: number } | null>(null);
+  useEffect(() => {
+    const prev = prevRef.current;
+    if (prev !== null && prev.seed !== computed.seed) {
+      setDelta(null); // new game: nothing to attribute
+    } else if (
+      prev !== null &&
+      prev.key !== computed.key &&
+      Math.abs(computed.forecast.fromSol - prev.forecast.fromSol) <= REFRESH_SOLS * 2
+    ) {
+      setDelta({ delta: diffForecasts(prev.forecast, computed.forecast), atSol: computed.forecast.fromSol });
+    }
+    prevRef.current = computed;
+  }, [computed]);
 
   const lost =
     sim.endState === "STARVED" ||
@@ -167,6 +234,39 @@ export function FlightDirector(props: { docked?: boolean } = {}): React.ReactEle
           </li>
         ))}
       </ul>
+      {delta !== null ? (
+        <div className="mt-1.5 border border-[var(--rust)] px-2 py-1">
+          <div className="flex justify-between items-baseline">
+            <span className="text-[9px] uppercase tracking-widest text-[var(--rust-hot)]">
+              Your last order · s{delta.atSol}
+            </span>
+            <button
+              type="button"
+              onClick={() => setDelta(null)}
+              className="text-[9px] text-[var(--dim)] hover:text-[var(--text)] px-1"
+              aria-label="Dismiss the plan delta"
+            >
+              ×
+            </button>
+          </div>
+          {delta.delta.changed ? (
+            <ul className="space-y-0.5 mt-0.5">
+              {delta.delta.lines.map((l) => (
+                <li key={l.text} className="text-[10px] leading-snug flex gap-1.5">
+                  <span aria-hidden style={{ color: toneColor(l.tone) }}>
+                    {l.tone === "good" ? "▲" : l.tone === "bad" ? "▼" : "▸"}
+                  </span>
+                  <span className="text-[var(--text)]">{l.text}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-[10px] text-[var(--dim)] mt-0.5">
+              No measurable change to the forecast.
+            </div>
+          )}
+        </div>
+      ) : null}
       <div className="text-[8px] text-[var(--dim)] mt-1.5 border-t border-[var(--line)] pt-1">
         The engine itself, run {forecast.horizonSols} sols ahead with no new orders — deterministic, so this
         is what happens if you change nothing.

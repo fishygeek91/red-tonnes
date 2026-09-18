@@ -45,6 +45,17 @@ export function GhostHud(): React.ReactElement | null {
   // Ghost identity guard: a newly loaded ghost must not replay old toasts.
   const lastGhostRef = useRef<GhostRun | null>(null);
   const nextIdRef = useRef(1);
+  // Pending toast-expiry timers, cleared on unmount so no timer fires into
+  // an unmounted component after the race ends.
+  const timerIdsRef = useRef<number[]>([]);
+  useEffect(() => {
+    const ids = timerIdsRef.current;
+    return () => {
+      for (const id of ids) {
+        window.clearTimeout(id);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (ghost !== lastGhostRef.current) {
@@ -78,9 +89,11 @@ export function GhostHud(): React.ReactElement | null {
     }));
     setToasts((cur) => [...cur, ...added].slice(-TOAST_STACK));
     for (const t of added) {
-      window.setTimeout(() => {
-        setToasts((cur) => cur.filter((x) => x.id !== t.id));
-      }, TOAST_MS);
+      timerIdsRef.current.push(
+        window.setTimeout(() => {
+          setToasts((cur) => cur.filter((x) => x.id !== t.id));
+        }, TOAST_MS),
+      );
     }
   }, [ghost, sim.sol]);
 

@@ -47,6 +47,8 @@ export interface Forecast {
   readonly quotaKg: number;
   /** First projected sol where banked methalox reaches the quota; null if never. */
   readonly fuelReadySol: number | null;
+  /** Methalox banked on the eve of the next burn, kg (0 if the burn is beyond the horizon). */
+  readonly fuelAtBurnKg: number;
   /** Departure verdict for the next burn. */
   readonly verdict: DepartureVerdict;
   /** Terminal state the projection ends in ('' if the city survives the horizon). */
@@ -97,6 +99,28 @@ function isTerminalLoss(end: EndState): boolean {
 }
 
 /**
+ * Find the failure event that actually names `end`, not merely the first
+ * failure-kind line in the log.
+ * @param events - Future events from the projection.
+ * @param end - Terminal lose state to match.
+ */
+function terminalLossEvent(
+  events: readonly { readonly sol: number; readonly kind: string; readonly text: string }[],
+  end: EndState,
+): { readonly sol: number } | undefined {
+  if (end === "STARVED") {
+    return events.find((e) => e.text.startsWith("STARVED"));
+  }
+  if (end === "DUST YEAR BLACKOUT") {
+    return events.find((e) => e.text.startsWith("DUST YEAR BLACKOUT"));
+  }
+  if (end === "STRANDED (NO METHALOX)") {
+    return events.find((e) => e.text.startsWith("Departure window MISSED"));
+  }
+  return undefined;
+}
+
+/**
  * Project the city `horizonSols` ahead with no player actions.
  * Pure: the input state is never mutated (step clones internally).
  * @param state - The live simulation state to fork.
@@ -120,6 +144,7 @@ export function runForecast(
       nextDepartureSol: burnSol,
       quotaKg,
       fuelReadySol: null,
+      fuelAtBurnKg: 0,
       verdict: "lost",
       projectedEnd: state.endState,
       projectedEndSol: fromSol,
@@ -169,7 +194,7 @@ export function runForecast(
   const projectedEnd = projected.endState;
   const burnEvent = futureEvents.find((e) => e.text.startsWith("Departure burn"));
   const missEvent = futureEvents.find((e) => e.text.startsWith("Departure window MISSED"));
-  const lossEvent = futureEvents.find((e) => e.kind === "failure" && isTerminalLoss(projectedEnd));
+  const lossEvent = terminalLossEvent(futureEvents, projectedEnd);
   const projectedEndSol = isTerminalLoss(projectedEnd) ? (lossEvent?.sol ?? projected.sol) : null;
 
   let verdict: DepartureVerdict;
@@ -188,12 +213,17 @@ export function runForecast(
   }
 
   // Fuel banked on the eve of the burn (last snapshot strictly before it).
+  // Zero when the burn is past the horizon — do not report horizon-end
+  // inventory as if it were the burn-eve figure.
+  const burnInHorizon = burnSol <= fromSol + horizon;
   let fuelAtBurnKg = 0;
-  for (const snap of snapshots) {
-    if (snap.sol >= burnSol) {
-      break;
+  if (burnInHorizon) {
+    for (const snap of snapshots) {
+      if (snap.sol >= burnSol) {
+        break;
+      }
+      fuelAtBurnKg = snap.methaloxKg;
     }
-    fuelAtBurnKg = snap.methaloxKg;
   }
 
   // ---- advisory lines, priority ordered ---------------------------------------
@@ -211,7 +241,8 @@ export function runForecast(
       sol: burnSol,
       text: `Departure burn MISSED on sol ${burnSol}: projected ${(fuelAtBurnKg / 1000).toFixed(0)} t of ${(quotaKg / 1000).toFixed(0)} t. Add Sabatier/power or cut demand now.`,
     });
-  } else if (verdict === "lost" && projectedEndSol !== null) {
+  }
+  if (projectedEndSol !== null) {
     findings.push({
       tone: "bad",
       sol: projectedEndSol,
@@ -267,6 +298,7 @@ export function runForecast(
     nextDepartureSol: burnSol,
     quotaKg,
     fuelReadySol,
+    fuelAtBurnKg,
     verdict,
     projectedEnd,
     projectedEndSol,
@@ -275,4 +307,114 @@ export function runForecast(
     peakTauSol,
     findings,
   };
+}
+
+/** One line of a plan delta (the consequence of the player's last order). */
+export interface ForecastDeltaLine {
+  /** Color / severity: good = the future improved, bad = it worsened. */
+  readonly tone: ForecastTone;
+  /** Human-readable consequence text. */
+  readonly text: string;
+}
+
+/** The measurable difference between two forecasts. */
+export interface ForecastDelta {
+  /** True when at least one milestone moved. */
+  readonly changed: boolean;
+  /** Consequence lines, most important first. */
+  readonly lines: readonly ForecastDeltaLine[];
+}
+
+/** Short label for a departure verdict, used in delta lines. */
+function verdictLabel(v: DepartureVerdict): string {
+  if (v === "burn") {
+    return "burn MADE";
+  }
+  if (v === "miss") {
+    return "burn MISSED";
+  }
+  if (v === "lost") {
+    return "city LOST";
+  }
+  return "beyond horizon";
+}
+
+/** Rank a verdict for better/worse comparison (higher is better). */
+function verdictRank(v: DepartureVerdict): number {
+  if (v === "burn") {
+    return 3;
+  }
+  if (v === "beyond") {
+    return 2;
+  }
+  if (v === "miss") {
+    return 1;
+  }
+  return 0;
+}
+
+/**
+ * Diff two forecasts of the same run: what did the player's last order buy?
+ * Both forecasts should be taken close together in time (the caller guards
+ * that), so every difference is attributable to the order, not to the clock.
+ * @param before - The forecast in force before the order.
+ * @param after - The forecast recomputed after the order.
+ * @returns Consequence lines, most important first.
+ */
+export function diffForecasts(before: Forecast, after: Forecast): ForecastDelta {
+  const lines: ForecastDeltaLine[] = [];
+
+  // Departure verdict flips are the headline.
+  if (before.verdict !== after.verdict) {
+    lines.push({
+      tone: verdictRank(after.verdict) >= verdictRank(before.verdict) ? "good" : "bad",
+      text: `Departure verdict: ${verdictLabel(before.verdict)} → ${verdictLabel(after.verdict)}.`,
+    });
+  }
+
+  // Fuel-ready sol movement (or appearing / vanishing from the horizon).
+  if (before.fuelReadySol !== null && after.fuelReadySol !== null) {
+    const moved = after.fuelReadySol - before.fuelReadySol;
+    if (moved !== 0) {
+      lines.push({
+        tone: moved < 0 ? "good" : "bad",
+        text: `Fuel-ready moved s${before.fuelReadySol} → s${after.fuelReadySol} (${Math.abs(moved)} sols ${moved < 0 ? "earlier" : "later"}).`,
+      });
+    }
+  } else if (before.fuelReadySol === null && after.fuelReadySol !== null) {
+    lines.push({ tone: "good", text: `Quota fuel now reached (~s${after.fuelReadySol}).` });
+  } else if (before.fuelReadySol !== null && after.fuelReadySol === null) {
+    lines.push({ tone: "bad", text: "Quota fuel no longer reached inside the horizon." });
+  }
+
+  // Fuel banked on the eve of the burn (only when both forecasts can see it).
+  if (before.verdict !== "beyond" && after.verdict !== "beyond") {
+    const fuelMovedT = (after.fuelAtBurnKg - before.fuelAtBurnKg) / 1000;
+    if (Math.abs(fuelMovedT) >= 1) {
+      lines.push({
+        tone: fuelMovedT > 0 ? "good" : "bad",
+        text: `Fuel at the burn ${fuelMovedT > 0 ? "+" : "−"}${Math.abs(fuelMovedT).toFixed(0)} t (${(before.fuelAtBurnKg / 1000).toFixed(0)} → ${(after.fuelAtBurnKg / 1000).toFixed(0)} t).`,
+      });
+    }
+  }
+
+  // Hunger onset movement: later (or gone) is good.
+  if (before.hungerOnsetSol !== null && after.hungerOnsetSol !== null) {
+    const moved = after.hungerOnsetSol - before.hungerOnsetSol;
+    if (moved !== 0) {
+      lines.push({
+        tone: moved > 0 ? "good" : "bad",
+        text: `Caloric deficit moved s${before.hungerOnsetSol} → s${after.hungerOnsetSol} (${Math.abs(moved)} sols ${moved > 0 ? "later" : "sooner"}).`,
+      });
+    }
+  } else if (before.hungerOnsetSol !== null && after.hungerOnsetSol === null) {
+    lines.push({ tone: "good", text: "Caloric deficit cleared from the forecast." });
+  } else if (before.hungerOnsetSol === null && after.hungerOnsetSol !== null) {
+    lines.push({
+      tone: "bad",
+      text: `Caloric deficit now begins ~s${after.hungerOnsetSol}.`,
+    });
+  }
+
+  return { changed: lines.length > 0, lines };
 }

@@ -4,7 +4,6 @@
  */
 
 import {
-  DEPARTURE_OFFSET_SOLS,
   EARTH_FOOD_KCAL_PER_KG,
   HUMAN_KCAL_PER_SOL,
   HUMAN_WATER_KG_PER_SOL,
@@ -18,6 +17,7 @@ import {
 import { CROPS } from '../crops';
 import { STRUCTURES } from '../structures';
 import { safeDiv } from '../types';
+import { nextDepartureSol } from './forecast';
 import type { SimState } from './state';
 import { selfSufficiencyOf } from './step';
 
@@ -40,7 +40,6 @@ export interface TopBarStats {
 export function topBarStats(s: SimState): TopBarStats {
   const last = s.history[s.history.length - 1];
   const nextArrival = (s.window + 1) * SOLS_PER_SYNODIC_WINDOW;
-  const nextDeparture = s.window * SOLS_PER_SYNODIC_WINDOW + DEPARTURE_OFFSET_SOLS;
   const methaloxKg = s.inv.ch4Kg + s.inv.loxKg;
   const perShip = Math.max(1, s.params.methaloxPerShipT * 1000);
   // Ships fuelable requires BOTH species at the 3.6:1 ratio, not just total mass.
@@ -53,7 +52,7 @@ export function topBarStats(s: SimState): TopBarStats {
   return {
     window: s.window,
     solsToNextArrival: Math.max(0, nextArrival - s.sol),
-    solsToNextDeparture: Math.max(0, nextDeparture - s.sol),
+    solsToNextDeparture: Math.max(0, nextDepartureSol(s.sol) - s.sol),
     selfSufficiency: selfSufficiencyOf(s.ledgers[s.ledgers.length - 1]),
     methaloxT: methaloxKg / 1000,
     shipsFuelable: Math.min(ch4Ships, loxShips),
@@ -85,11 +84,16 @@ export function missedWindowTest(s: SimState): MissedWindowTest {
   for (const crop of CROPS) {
     kcalStored += (s.inv.localFoodKg[crop.id] ?? 0) * crop.kcalPerKg;
   }
-  // Local production rate: average edible kcal over the last 30 sols of history.
+  // Local production rate: average *grown* edible kcal over the last 30 sols.
+  // kcalPerPersonSol is calories eaten (Earth rations included); strip those
+  // out or a city on imported food reports a "grown" rate equal to full demand.
   const recent = s.history.slice(-30);
   const kcalGrownPerSol =
     recent.length > 0
-      ? recent.reduce((a, h) => a + h.kcalPerPersonSol * h.population, 0) / recent.length
+      ? recent.reduce(
+          (a, h) => a + h.kcalPerPersonSol * (1 - h.earthFoodFraction) * h.population,
+          0,
+        ) / recent.length
       : 0;
   const netBurn = Math.max(1, kcalNeedPerSol - Math.min(kcalGrownPerSol, kcalNeedPerSol * 0.98));
   const foodRunway = kcalStored / netBurn + (kcalGrownPerSol >= kcalNeedPerSol ? required : 0);

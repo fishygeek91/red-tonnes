@@ -28,6 +28,8 @@ export interface GhostRun {
   readonly milestones: readonly SimEvent[];
   /** Outcome of the shared run ('' if it was still running when shared). */
   readonly endState: EndState;
+  /** First sol the ghost banked a return-fuel quota; null if it never did. */
+  readonly fuelReadySol: number | null;
   /** Sol the run was shared at; the ghost has no data past this. */
   readonly finalSol: number;
 }
@@ -47,6 +49,7 @@ export function ghostFromReplay(log: RunLog, replayed: SimState): GhostRun {
     history: [...replayed.history],
     milestones: replayed.events.filter((e) => e.kind === 'milestone'),
     endState: replayed.endState,
+    fuelReadySol: replayed.fuelReadySol,
     finalSol: log.finalSol,
   };
 }
@@ -93,21 +96,13 @@ export function ghostFuelLeadSols(
   return null;
 }
 
-/** First sol a RETURN FUEL READY milestone fired in an event list, or null. */
-function fuelReadySolOf(events: readonly SimEvent[]): number | null {
-  const hit = events.find(
-    (e) => e.kind === 'milestone' && e.text.startsWith('RETURN FUEL READY'),
-  );
-  return hit ? hit.sol : null;
-}
-
 /**
  * One-line race verdict for the scorecard, comparing when each side first
  * banked a full return load. Null while the race is still undecided.
  */
 export function raceVerdict(ghost: GhostRun, sim: SimState): string | null {
-  const yourSol = fuelReadySolOf(sim.events);
-  const ghostSol = fuelReadySolOf(ghost.milestones);
+  const yourSol = sim.fuelReadySol;
+  const ghostSol = ghost.fuelReadySol;
   if (yourSol !== null && ghostSol !== null) {
     const delta = ghostSol - yourSol;
     if (delta > 0) {

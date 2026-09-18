@@ -22,10 +22,21 @@ export function SharedRunLoader(): null {
     if (!hash.startsWith('#r=')) {
       return;
     }
+    // Snapshot the run log identity before the async decode: if the visitor
+    // starts a new game / daily / race while a large log is still inflating,
+    // their fresh run must NOT be stomped by the late-arriving shared one.
+    const logAtRequest = useSimStore.getState().runLog;
     void decodeRunLog(hash.slice(3)).then((log) => {
-      if (log) {
-        loadSharedRun(log);
+      if (!log) {
+        return;
       }
+      if (useSimStore.getState().runLog !== logAtRequest) {
+        return; // the user moved on; drop the decoded run
+      }
+      loadSharedRun(log);
+      // Clear the fragment so a reload returns to the player's own session
+      // instead of resurrecting the shared run.
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
     });
   }, [loadSharedRun]);
 

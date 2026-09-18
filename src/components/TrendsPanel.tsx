@@ -148,7 +148,12 @@ function Chart(props: {
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
         className="w-full h-16 border border-[var(--line)] bg-black/20 cursor-crosshair touch-none"
-        onPointerDown={scrubFromEvent}
+        onPointerDown={(e) => {
+          // Capture so a touch drag keeps scrubbing when the finger drifts
+          // off this 64px-tall chart instead of dying at its edge.
+          e.currentTarget.setPointerCapture(e.pointerId);
+          scrubFromEvent(e);
+        }}
         onPointerMove={(e) => {
           if (e.buttons === 1) {
             scrubFromEvent(e);
@@ -252,8 +257,11 @@ export function TrendsPanel(props: { force?: boolean; stacked?: boolean } = {}):
 
   const maxSol = sim.sol;
   const viewSol = scrubSol ?? sim.sol;
+  // Clamp to the first recorded snapshot (sol 1): a sol-0 scrub has no
+  // history entry and would silently display live numbers.
+  const firstSol = sim.history.length > 0 ? sim.history[0].sol : 0;
   const onScrub = (sol: number): void => {
-    setScrubSol(sol >= sim.sol ? null : Math.max(0, sol));
+    setScrubSol(sol >= sim.sol ? null : Math.max(firstSol, sol));
   };
   const quotaT = sim.params.methaloxPerShipT * sim.params.returnShipsPerWindow;
 

@@ -133,6 +133,18 @@ function ledgerSum(rec: Record<string, number>): number {
   return Object.values(rec).reduce((a, b) => a + b, 0);
 }
 
+/**
+ * Draw up to `want` kg from a pool. Returns the amount actually taken so
+ * irrecoverable losses can be credited to `ventedKg` without inventing mass
+ * when the tank is already empty.
+ * @param pool - Current pool, kg.
+ * @param want - Requested draw, kg.
+ */
+function takeKg(pool: number, want: number): { pool: number; took: number } {
+  const took = Math.min(Math.max(0, pool), Math.max(0, want));
+  return { pool: pool - took, took };
+}
+
 /** Self-sufficiency of a window ledger: local / (local + imported). */
 export function selfSufficiencyOf(l: WindowLedger | undefined): number {
   if (!l) {
@@ -360,7 +372,7 @@ function stepOneSol(s: SimState): SimState {
     const potFresh = freshTotal * lightWeighted * mediaFactor * eff;
     const dry = potFresh * crop.dryMatterFraction;
     potDryTotal += dry;
-    potNDemand += dry * N_PER_KG_DRY_BIOMASS * (crop.fixesNitrogen ? 0.25 : 1);
+    potNDemand += dry * N_PER_KG_DRY_BIOMASS * (crop.fixesNitrogen ? 0.25 : 1) * 0.85;
     potPDemand += dry * P_PER_KG_DRY_BIOMASS;
     // Water demand = the water LOCKED INTO fresh tissue (fresh mass is mostly
     // water) + the unrecovered share of transpiration. Biomass is a real
@@ -385,7 +397,9 @@ function stepOneSol(s: SimState): SimState {
   // Second pass: realized growth, harvests, and the mass bookkeeping.
   let dryFixedTotal = 0;
   let edibleTotal = 0;
-  let waterUsedNet = 0;
+  let tissueWaterKg = 0;
+  let transpirationLossKg = 0;
+  let nDrawn = 0;
   const harvestedCrops: string[] = [];
   for (const crop of CROPS) {
     const area = ghArea * (s.cropMix[crop.id] ?? 0);
@@ -404,22 +418,27 @@ function stepOneSol(s: SimState): SimState {
     inv.localFoodKg[crop.id] = (inv.localFoodKg[crop.id] ?? 0) + edible;
     inv.feedstockKg += inedible;
     // Transpiration: most water condenses and recycles; only the loss fraction
-    // leaves the pool. The water LOCKED INTO fresh tissue also leaves — it
-    // comes back later when the food is eaten or the biomass is composted.
-    waterUsedNet +=
-      edible * crop.waterLPerKgEdible * (1 - WATER_RECYCLE_FRACTION) +
-      fresh * (1 - crop.dryMatterFraction);
+    // leaves the pool (vented). The water LOCKED INTO fresh tissue also leaves
+    // — it comes back later when the food is eaten or the biomass is composted.
+    transpirationLossKg += edible * crop.waterLPerKgEdible * (1 - WATER_RECYCLE_FRACTION);
+    tissueWaterKg += fresh * (1 - crop.dryMatterFraction);
+    nDrawn += dry * N_PER_KG_DRY_BIOMASS * (crop.fixesNitrogen ? 0.25 : 1) * 0.85;
     if (edible > 0.01) {
       harvestedCrops.push(crop.id);
     }
   }
-  // Elemental draws for the fixed biomass.
-  inv.nitrogenKg = Math.max(0, inv.nitrogenKg - dryFixedTotal * N_PER_KG_DRY_BIOMASS * 0.85);
+  // Elemental draws for the fixed biomass (same N formula as the demand gate).
+  inv.nitrogenKg = Math.max(0, inv.nitrogenKg - nDrawn);
   inv.phosphorusKg = Math.max(0, inv.phosphorusKg - dryFixedTotal * P_PER_KG_DRY_BIOMASS);
   inv.potassiumKg = Math.max(0, inv.potassiumKg - dryFixedTotal * 0.025);
   inv.co2Kg = Math.max(0, inv.co2Kg - dryFixedTotal * CO2_PER_KG_DRY_BIOMASS);
   inv.o2Kg += dryFixedTotal * O2_PER_KG_DRY_BIOMASS;
-  inv.waterKg = Math.max(0, inv.waterKg - waterUsedNet);
+  const waterUsedNet = tissueWaterKg + transpirationLossKg;
+  const waterTake = takeKg(inv.waterKg, waterUsedNet);
+  inv.waterKg = waterTake.pool;
+  if (waterUsedNet > 0) {
+    s.ventedKg += transpirationLossKg * (waterTake.took / waterUsedNet);
+  }
   credit(ledger.produced, 'food', edibleTotal);
   s.localOutputTonnes += edibleTotal / 1000;
 
@@ -478,25 +497,30 @@ function stepOneSol(s: SimState): SimState {
   );
 
   // Hunger tracks three distinct failures: raw calories, protein, and variety.
-  const kcalOk = kcalGot >= kcalNeed * 0.9;
-  const proteinOk = proteinGot >= proteinNeed * 0.8;
-  const varietyOk =
-    earthFoodFraction > 0.25 || Object.keys(s.recentHarvests).length >= VARIETY_MIN_CROPS;
-  if (!kcalOk) {
-    s.hungerSols += 1;
-    if (s.hungerSols === 10) {
-      logEvent(s, 'warning', 'Caloric deficit 10 sols running. Rations short, greenhouses not covering.');
-    }
-  } else if (!proteinOk || !varietyOk) {
-    s.hungerSols += 0.34; // deficiency kills slower than starvation
-    if (!proteinOk && Math.floor(s.sol) % 40 === 0) {
-      logEvent(s, 'warning', 'Calories exist but protein/N fails — legume and spirulina area is too small.');
-    }
-    if (!varietyOk && Math.floor(s.sol) % 40 === 1) {
-      logEvent(s, 'warning', 'Diet variety collapse (scurvy-class risk): fewer than 3 crops harvested in 60 sols.');
-    }
+  // A crewless city cannot starve — there is nobody to feed.
+  if (pop <= 0) {
+    s.hungerSols = 0;
   } else {
-    s.hungerSols = Math.max(0, s.hungerSols - 0.5);
+    const kcalOk = kcalGot >= kcalNeed * 0.9;
+    const proteinOk = proteinGot >= proteinNeed * 0.8;
+    const varietyOk =
+      earthFoodFraction > 0.25 || Object.keys(s.recentHarvests).length >= VARIETY_MIN_CROPS;
+    if (!kcalOk) {
+      s.hungerSols += 1;
+      if (s.hungerSols === 10) {
+        logEvent(s, 'warning', 'Caloric deficit 10 sols running. Rations short, greenhouses not covering.');
+      }
+    } else if (!proteinOk || !varietyOk) {
+      s.hungerSols += 0.34; // deficiency kills slower than starvation
+      if (!proteinOk && Math.floor(s.sol) % 40 === 0) {
+        logEvent(s, 'warning', 'Calories exist but protein/N fails — legume and spirulina area is too small.');
+      }
+      if (!varietyOk && Math.floor(s.sol) % 40 === 1) {
+        logEvent(s, 'warning', 'Diet variety collapse (scurvy-class risk): fewer than 3 crops harvested in 60 sols.');
+      }
+    } else {
+      s.hungerSols = Math.max(0, s.hungerSols - 0.5);
+    }
   }
 
   // Breathing, water, and wastes. People breathe the same amount whether or
@@ -519,7 +543,10 @@ function stepOneSol(s: SimState): SimState {
     o2Unmet = shortfall;
   }
   inv.co2Kg += pop * HUMAN_CO2_KG_PER_SOL;
-  inv.waterKg = Math.max(0, inv.waterKg - pop * HUMAN_WATER_KG_PER_SOL * (1 - WATER_RECYCLE_FRACTION));
+  const humanWaterLoss = pop * HUMAN_WATER_KG_PER_SOL * (1 - WATER_RECYCLE_FRACTION);
+  const humanWaterTake = takeKg(inv.waterKg, humanWaterLoss);
+  inv.waterKg = humanWaterTake.pool;
+  s.ventedKg += humanWaterTake.took;
   inv.feedstockKg += pop * HUMAN_SOLID_WASTE_KG_PER_SOL;
   // Urine N recovery: captured to the fertilizer pool; the sim's brine loss is the (1-recycle) water share.
   inv.nitrogenKg += pop * HUMAN_URINE_KG_PER_SOL * URINE_N_FRACTION * 0.85;
@@ -603,22 +630,24 @@ function stepOneSol(s: SimState): SimState {
   // ---- soil factory ----------------------------------------------------------
   const tier = industryTierFor(s.localOutputTonnes).tier;
   const soilCapKg = s.structures.soilFactory * STRUCTURES.soilFactory.capacityValue * eff;
-  if (soilCapKg > 0 && tier >= 1) {
-    const washEnergy = soilCapKg * PERCHLORATE_WASH_KWH_PER_KG;
+  // Size the wash to the compost actually on hand so we never spend kWh
+  // washing regolith that cannot be blended into soil.
+  if (soilCapKg > 0 && tier >= 1 && inv.compostKg > 0) {
+    const compostBudget = Math.min(inv.compostKg, soilCapKg * SOIL_COMPOST_FRACTION);
+    const regolithWanted = compostBudget / SOIL_COMPOST_FRACTION;
+    const washEnergy = regolithWanted * PERCHLORATE_WASH_KWH_PER_KG;
     const washFrac = clamp(safeDiv(Math.min(energyKwh, washEnergy), washEnergy, 0), 0, 1);
-    const regolithWashed = soilCapKg * washFrac;
-    energyKwh -= regolithWashed * PERCHLORATE_WASH_KWH_PER_KG;
-    // Blending needs organics: compost at SOIL_COMPOST_FRACTION of the batch.
-    const compostNeeded = regolithWashed * SOIL_COMPOST_FRACTION;
-    const compostUsed = Math.min(inv.compostKg, compostNeeded);
-    const soilMade = compostUsed > 0 ? compostUsed / SOIL_COMPOST_FRACTION + compostUsed : 0;
-    if (soilMade > 0) {
+    const regolithWashed = regolithWanted * washFrac;
+    const compostUsed = regolithWashed * SOIL_COMPOST_FRACTION;
+    if (regolithWashed > 0 && compostUsed > 0) {
+      energyKwh -= regolithWashed * PERCHLORATE_WASH_KWH_PER_KG;
+      const soilMade = regolithWashed + compostUsed;
       inv.compostKg -= compostUsed;
       inv.cleanSoilKg += soilMade;
-      inv.waterKg = Math.max(
-        0,
-        inv.waterKg - (soilMade - compostUsed) * PERCHLORATE_WASH_WATER_PER_KG * (1 - WATER_RECYCLE_FRACTION),
-      );
+      const washWaterWant = (soilMade - compostUsed) * PERCHLORATE_WASH_WATER_PER_KG * (1 - WATER_RECYCLE_FRACTION);
+      const washTake = takeKg(inv.waterKg, washWaterWant);
+      inv.waterKg = washTake.pool;
+      s.ventedKg += washTake.took;
       credit(ledger.produced, 'soil', soilMade);
       s.localOutputTonnes += soilMade / 1000;
     }
@@ -789,10 +818,16 @@ function stepOneSol(s: SimState): SimState {
     logEvent(s, 'failure', 'DUST YEAR BLACKOUT. Solar fell below life support for 20 sols with no reserve.');
   }
   const quota = s.params.methaloxPerShipT * 1000 * s.params.returnShipsPerWindow;
-  if (s.endState === '' && inv.ch4Kg + inv.loxKg >= quota && quota > 0) {
-    const already = s.events.some((e) => e.text.startsWith('RETURN FUEL READY'));
-    if (!already) {
+  if (quota > 0 && inv.ch4Kg + inv.loxKg >= quota) {
+    if (s.fuelReadySol === null) {
+      s.fuelReadySol = s.sol;
+    }
+    // Announce (or re-announce after a quota increase). Never keyed off the
+    // capped event log — that would suppress a raised-quota win forever, or
+    // re-fire after the milestone scrolled off.
+    if (s.endState === '' && s.fuelReadyQuotaKg < quota) {
       s.endState = 'RETURN FUEL READY';
+      s.fuelReadyQuotaKg = quota;
       logEvent(s, 'milestone', `RETURN FUEL READY: ${((inv.ch4Kg + inv.loxKg) / 1000).toFixed(0)} t methalox banked — ships can go home.`);
     }
   }
@@ -828,6 +863,7 @@ function arriveWindow(s: SimState, w: number): void {
   const capacityKg = s.params.shipsPerWindow * s.params.starshipPayloadT * 1000;
   const m = s.manifests[w];
   const imported: Record<string, number> = {};
+  const produced: Record<string, number> = {};
   let landedKg = 0;
   const tierNow = industryTierFor(s.localOutputTonnes).tier;
 
@@ -845,7 +881,9 @@ function arriveWindow(s: SimState, w: number): void {
         credit(imported, 'structures', importMassPer);
         if (localFrac > 0) {
           // The locally-made share is produced mass, not imported mass.
-          s.localOutputTonnes += (spec.massKg * localFrac) / 1000;
+          const localKg = spec.massKg * localFrac;
+          s.localOutputTonnes += localKg / 1000;
+          credit(produced, 'structures', localKg);
         }
         count -= 1;
       }
@@ -875,6 +913,8 @@ function arriveWindow(s: SimState, w: number): void {
       s.population += m.crew;
       landedKg += crewMass;
       credit(imported, 'people', crewMass);
+    } else if (m.crew > 0) {
+      logEvent(s, 'warning', `${m.crew} crew could not land — the window's payload was already full.`);
     }
   }
 
@@ -891,7 +931,7 @@ function arriveWindow(s: SimState, w: number): void {
     s.closedLoopWindows = 0;
   }
 
-  s.ledgers.push({ window: w, imported, produced: {}, shipsLanded, shipsDeparted: 0, shipsStranded: 0 });
+  s.ledgers.push({ window: w, imported, produced, shipsLanded, shipsDeparted: 0, shipsStranded: 0 });
   logEvent(
     s,
     shipsLanded > 0 ? 'milestone' : 'warning',

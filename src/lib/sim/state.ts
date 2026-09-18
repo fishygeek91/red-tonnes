@@ -189,8 +189,15 @@ export interface SimState {
   history: SolSnapshot[];
   /** Terminal outcome, '' while running. */
   endState: EndState;
-  /** Count of consecutive windows with self-sufficiency >= 0.95 (win tracking). */
+  /** Count of consecutive windows with self-sufficiency >= 0.8 (win tracking; see arriveWindow in step.ts). */
   closedLoopWindows: number;
+  /**
+   * First sol the tanks met a return-fuel quota. Sticky for the run (ghost
+   * racing keys off this); independent of the capped event log.
+   */
+  fuelReadySol: number | null;
+  /** Quota, kg, that last armed RETURN FUEL READY. 0 = never announced. */
+  fuelReadyQuotaKg: number;
   /** Tunable parameters. */
   params: ModelParams;
   /** Mass vented / irrecoverably lost, kg (closes the conservation books). */
@@ -427,6 +434,8 @@ export function createInitialState(opts: NewGameOptions): SimState {
     history: [],
     endState: '',
     closedLoopWindows: 0,
+    fuelReadySol: null,
+    fuelReadyQuotaKg: 0,
     params: {
       starshipPayloadT: payloadT,
       methaloxPerShipT: opts.methaloxPerShipT ?? DEFAULT_METHALOX_PER_SHIP_T,

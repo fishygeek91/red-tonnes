@@ -16,7 +16,6 @@ import { appendRunAction, emptyRunLog, replayRun } from '../lib/share/recording'
 import type { InspectId } from '../lib/sim/inspect';
 import type { Manifest, SimState } from '../lib/sim/state';
 import { createInitialState } from '../lib/sim/state';
-import type { SimActions } from '../lib/sim/step';
 import { step } from '../lib/sim/step';
 
 /** Playback speeds in sols advanced per real second. */
@@ -56,6 +55,12 @@ interface SimStore {
   speed: number;
   /** Scrubber position (sol index into history); null = live. */
   scrubSol: number | null;
+  /** Whether the clock was running when the current scrub began (restored on return-to-live). */
+  playingBeforeScrub: boolean | null;
+  /** Whether the clock was running when the setup modal opened (restored on close). */
+  playingBeforeSetup: boolean | null;
+  /** True while a manifest slider is mid-drag: freezes the clock so a window cannot arrive and silently retarget the edit. */
+  clockHold: boolean;
   /** True until the player dismisses the intro / starts a custom game. */
   showSetup: boolean;
   /** Sources & assumptions drawer visibility. */
@@ -103,8 +108,8 @@ interface SimStore {
   togglePlay: () => void;
   /** Set playback speed (sols/sec). */
   setSpeed: (speed: number) => void;
-  /** Advance the sim by whole sols with optional actions. */
-  advance: (dtSols: number, actions?: SimActions) => void;
+  /** Freeze/unfreeze the clock during an active slider drag. */
+  setClockHold: (hold: boolean) => void;
   /** Clock tick from the animation loop; dt in real seconds. */
   tick: (dtSeconds: number) => void;
   /** Jump forward to the next window arrival. */
@@ -147,6 +152,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
   playing: true, // the first load plays itself (demo requirement)
   speed: 20,
   scrubSol: null,
+  playingBeforeScrub: null,
+  playingBeforeSetup: null,
+  clockHold: false,
   showSetup: false,
   showSources: false,
   showOverlay: false,
@@ -168,6 +176,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       sim: createInitialState({ seed, siteId, templateId }),
       playing: true,
       scrubSol: null,
+      playingBeforeScrub: null,
+      playingBeforeSetup: null,
+      clockHold: false,
       showSetup: false,
       accumulator: 0,
       runLog: emptyRunLog(seed, siteId, templateId),
@@ -191,6 +202,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       }),
       playing: true,
       scrubSol: null,
+      playingBeforeScrub: null,
+      playingBeforeSetup: null,
+      clockHold: false,
       showSetup: false,
       accumulator: 0,
       runLog: emptyRunLog(daily.seed, daily.siteId, daily.templateId, daily.dateKey),
@@ -213,6 +227,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       sim: replayed,
       playing: false,
       scrubSol: null,
+      playingBeforeScrub: null,
+      playingBeforeSetup: null,
+      clockHold: false,
       showSetup: false,
       accumulator: 0,
       runLog: log,
@@ -239,6 +256,9 @@ export const useSimStore = create<SimStore>((set, get) => ({
       sim: createInitialState({ seed: log.seed, siteId: log.siteId, templateId: log.templateId }),
       playing: true,
       scrubSol: null,
+      playingBeforeScrub: null,
+      playingBeforeSetup: null,
+      clockHold: false,
       showSetup: false,
       accumulator: 0,
       runLog: emptyRunLog(log.seed, log.siteId, log.templateId, log.daily),
@@ -259,17 +279,11 @@ export const useSimStore = create<SimStore>((set, get) => ({
 
   setSpeed: (speed) => set({ speed }),
 
-  advance: (dtSols, actions) => {
-    const st = get();
-    if (dtSols <= 0) {
-      return;
-    }
-    set({ sim: step(st.sim, dtSols, actions ?? {}), scrubSol: null });
-  },
+  setClockHold: (hold) => set({ clockHold: hold }),
 
   tick: (dtSeconds) => {
     const st = get();
-    if (!st.playing || st.sim.endState === 'STARVED' || st.sim.endState === 'STRANDED (NO METHALOX)' || st.sim.endState === 'DUST YEAR BLACKOUT') {
+    if (!st.playing || st.clockHold || st.sim.endState === 'STARVED' || st.sim.endState === 'STRANDED (NO METHALOX)' || st.sim.endState === 'DUST YEAR BLACKOUT') {
       return;
     }
     const acc = st.accumulator + dtSeconds * st.speed;
@@ -292,14 +306,34 @@ export const useSimStore = create<SimStore>((set, get) => ({
 
   // Scrubbing into history pauses the clock — otherwise the next tick would
   // wipe the scrub position and yank the player back to live within 50 ms.
+  // Returning to live restores whatever play state the scrub interrupted, so
+  // the timeline feels like a broadcast scrubber instead of a trap.
   setScrubSol: (sol) =>
-    set((st) => ({ scrubSol: sol, playing: sol === null ? st.playing : false })),
+    set((st) => {
+      if (sol === null) {
+        return {
+          scrubSol: null,
+          playing: st.playingBeforeScrub ?? st.playing,
+          playingBeforeScrub: null,
+        };
+      }
+      return {
+        scrubSol: sol,
+        playing: false,
+        playingBeforeScrub: st.scrubSol === null ? st.playing : st.playingBeforeScrub,
+      };
+    }),
 
+  // The three action dispatchers snap the view back to live (paused): the
+  // change lands on the live state, so showing stale history while silently
+  // editing the future would be a lie.
   setCropMix: (mix) => {
     const st = get();
     set({
       sim: step(st.sim, 0, { cropMix: mix }),
       runLog: appendRunAction(st.runLog, { sol: st.sim.sol, cropMix: mix }),
+      scrubSol: null,
+      playingBeforeScrub: null,
     });
   },
 
@@ -308,6 +342,8 @@ export const useSimStore = create<SimStore>((set, get) => ({
     set({
       sim: step(st.sim, 0, { manifests: { [window]: manifest } }),
       runLog: appendRunAction(st.runLog, { sol: st.sim.sol, manifests: { [window]: manifest } }),
+      scrubSol: null,
+      playingBeforeScrub: null,
     });
   },
 
@@ -316,15 +352,21 @@ export const useSimStore = create<SimStore>((set, get) => ({
     set({
       sim: step(st.sim, 0, { params }),
       runLog: appendRunAction(st.runLog, { sol: st.sim.sol, params }),
+      scrubSol: null,
+      playingBeforeScrub: null,
     });
   },
 
+  // Opening the setup modal pauses the clock (a run should not age or die
+  // behind a menu); closing without starting a new game restores it.
   setShowSetup: (v) =>
-    set({
+    set((st) => ({
       showSetup: v,
-      mobileSheet: v ? null : get().mobileSheet,
-      pendingSetupSiteId: v ? get().pendingSetupSiteId : null,
-    }),
+      playing: v ? false : (st.playingBeforeSetup ?? st.playing),
+      playingBeforeSetup: v ? st.playing : null,
+      mobileSheet: v ? null : st.mobileSheet,
+      pendingSetupSiteId: v ? st.pendingSetupSiteId : null,
+    })),
   setShowSources: (v) => set({ showSources: v, mobileSheet: v ? null : get().mobileSheet }),
   setShowOverlay: (v) => set({ showOverlay: v }),
   setInspect: (id) => set({ inspectId: id, mobileSheet: id !== null ? null : get().mobileSheet }),

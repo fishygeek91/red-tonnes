@@ -30,21 +30,31 @@ export function SimClock(): null {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const target = e.target;
-      // Never hijack keys while the user is typing in a form control.
-      if (
-        target instanceof HTMLInputElement ||
+      // Never hijack keys while the user is TYPING. Buttons and range sliders
+      // keep focus after a click, so excluding all inputs would make Space
+      // either dead or dangerous (it re-activates a focused "Next window"
+      // button); preventDefault below suppresses that default instead.
+      const isTyping =
+        (target instanceof HTMLInputElement &&
+          (target.type === 'text' || target.type === 'number' || target.type === 'search')) ||
         target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLButtonElement ||
-        target instanceof HTMLSelectElement
-      ) {
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+      if (isTyping) {
         return;
       }
+      // Shortcuts must not advance a run hidden behind the setup modal.
+      const modalOpen = useSimStore.getState().showSetup;
       if (e.code === 'Space') {
         e.preventDefault();
-        togglePlay();
+        if (!modalOpen) {
+          togglePlay();
+        }
       } else if (e.code === 'KeyN') {
         e.preventDefault();
-        jumpToNextWindow();
+        if (!modalOpen) {
+          jumpToNextWindow();
+        }
       }
     };
     window.addEventListener('keydown', onKey);

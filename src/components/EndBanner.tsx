@@ -30,14 +30,24 @@ export function EndBanner(): React.ReactElement | null {
   const setShowSetup = useSimStore((s) => s.setShowSetup);
   const setScrubSol = useSimStore((s) => s.setScrubSol);
   const [copied, setCopied] = useState<'card' | 'link' | 'report' | null>(null);
+  /** Identity of the last win banner the player dismissed (wins keep simulating; the banner must not cover the city forever). */
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
 
-  const report = useMemo(() => investigate(sim), [sim]);
+  // Gate the investigation behind an actual end state: while the city lives,
+  // this memo must be free — it re-evaluates every sol.
+  const report = useMemo(() => (sim.endState === '' ? null : investigate(sim)), [sim]);
 
   const endState = sim.endState;
   if (endState === '') {
     return null;
   }
   const isWin = endState === 'RETURN FUEL READY' || endState === 'SURVIVED 3 WINDOWS CLOSED-LOOP';
+  // A win banner identity: same seed + state + window = the same banner. A new
+  // window (or a different win) re-arms it.
+  const bannerKey = `${sim.seed}:${endState}:${sim.window}`;
+  if (isWin && dismissedKey === bannerKey) {
+    return null;
+  }
 
   /** Flash a "copied" acknowledgement on the pressed button. */
   const flash = (which: 'card' | 'link' | 'report'): void => {
@@ -144,7 +154,13 @@ export function EndBanner(): React.ReactElement | null {
             {copied === 'link' ? 'Copied!' : 'Copy challenge link'}
           </button>
           {isWin ? (
-            <span className="text-[10px] text-[var(--dim)] self-center">Sim continues — keep playing.</span>
+            <button
+              onClick={() => setDismissedKey(bannerKey)}
+              className="text-[10px] px-3 py-1.5 border border-[var(--rust)] text-[var(--rust-hot)] hover:bg-[var(--rust)] hover:text-black uppercase tracking-widest"
+              title="Close this banner — the sim continues underneath"
+            >
+              Keep playing
+            </button>
           ) : (
             <button
               onClick={() => setShowSetup(true)}

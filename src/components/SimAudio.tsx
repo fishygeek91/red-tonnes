@@ -188,6 +188,11 @@ export function SimAudio(): null {
     if (bed === null) {
       return;
     }
+    // A new game / race restart rewinds the clock: reset the cue cursor so
+    // the fresh run's landings and burns still rumble.
+    if (sim.sol < lastCueSol.current) {
+      lastCueSol.current = sim.sol;
+    }
     const fresh = sim.events.filter((e) => e.sol > lastCueSol.current);
     if (fresh.length === 0) {
       return;

@@ -2,7 +2,7 @@
  * Dev-only helper: end-to-end check of ghost racing in a real browser.
  *
  * Builds a shared-run permalink headlessly (seed 7, Arcadia, Balanced,
- * shared at sol 1300 — after the run banks return fuel at sol 1124), loads
+ * shared at sol 1300 — after the run banks return fuel at sol 1123), loads
  * it, clicks "Race the ghost", runs the race at 60 sols/s, and verifies the
  * HUD, pace line, and ghost chart overlays are on screen. Saves screenshots
  * to /tmp for eyeballing.
@@ -26,7 +26,7 @@ function must(condition: boolean, label: string): void {
 
 async function main(): Promise<void> {
   // A no-action run of the demo seed, shared at sol 1300: the ghost carries
-  // the RETURN FUEL READY milestone (sol 1124) and the storm year.
+  // the RETURN FUEL READY milestone (sol 1123) and the storm year.
   const log = { ...emptyRunLog(7, 'arcadia', 'balanced'), finalSol: 1300 };
   const encoded = await encodeRunLog(log);
   const url = `${baseUrl}#r=${encoded}`;

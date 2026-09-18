@@ -91,7 +91,11 @@ step(state, dtSols, actions) => nextState   // src/lib/sim/step.ts
   against the quota. Because `step` is pure and every draw derives from the
   seed, the forecast is not an estimate; it is bit-identical to the future
   (the smoke test proves it). Every build, crop, or slider change refreshes
-  the projection instantly — the panel is the consequence of your plan.
+  the projection after a short debounce — the panel is the consequence of
+  your plan. And it prices your orders: place one and a **plan delta**
+  appears, diffing the new future against the one you just abandoned —
+  "Fuel-ready moved s1123 → s970 (153 sols earlier)". Every decision gets a
+  receipt.
 - **Accident investigations.** A terminal lose (STARVED, STRANDED, BLACKOUT)
   walks the recorded history backwards and names the causal chain — storm
   onset, power shed, ISRU stall, ration exhaustion — as a short NTSB-style
@@ -115,7 +119,7 @@ Other data: `src/lib/sites.ts` (preset sites + dust-storm τ series),
 
 Load the page — the demo (seed 7, Arcadia Planitia, "Balanced 12-crew") plays
 itself at 20 sols/second. The Flight Director over the city already knows the
-whole run: it calls the sol-456 dust storm, the sol-1124 fuel milestone, and
+whole run: it calls the sol-456 dust storm, the sol-1123 fuel milestone, and
 the sol-1359 departure burn from the opening sols — point at it and say "that
 is the engine itself, run 1,400 sols ahead". Watch the top bar: two Starships
 are down, the ice mine fills the water tank, and methalox starts climbing. Around sol 420 a

@@ -8,7 +8,6 @@
 import {
   CO2_INTAKE_KWH_PER_KG,
   COMPOST_MATURITY_SOLS,
-  DEPARTURE_OFFSET_SOLS,
   DIGESTER_CH4_PER_KG_FEED,
   DIGESTER_CYCLE_SOLS,
   ELECTROLYSIS_KWH_PER_KG_H2,
@@ -20,7 +19,6 @@ import {
   SABATIER_CO2_PER_KG_CH4,
   SABATIER_H2_PER_KG_CH4,
   SOLAR_DAYLIGHT_FACTOR,
-  SOLS_PER_SYNODIC_WINDOW,
   TANK_BOILOFF_PER_SOL,
 } from '../constants';
 import { CROPS } from '../crops';
@@ -28,6 +26,7 @@ import { getSite, opticalDepthAtSol } from '../sites';
 import type { StructureId } from '../structures';
 import { STRUCTURES, industryTierFor } from '../structures';
 import { clamp, safeDiv } from '../types';
+import { nextDepartureSol } from './forecast';
 import type { SimState } from './state';
 import { plantFactors, sunlightFraction } from './step';
 
@@ -331,8 +330,7 @@ export function inspect(s: SimState, id: InspectId): Inspection {
       const ch4Ships = safeDiv(inv.ch4Kg * (1 + LOX_TO_CH4_RATIO), perShip, 0);
       const loxShips = safeDiv((inv.loxKg * (1 + LOX_TO_CH4_RATIO)) / LOX_TO_CH4_RATIO, perShip, 0);
       const fuelable = Math.min(ch4Ships, loxShips);
-      const departureSol = s.window * SOLS_PER_SYNODIC_WINDOW + DEPARTURE_OFFSET_SOLS;
-      const toDeparture = Math.max(0, departureSol - s.sol);
+      const toDeparture = Math.max(0, nextDepartureSol(s.sol) - s.sol);
       return {
         title: 'Starship',
         count: Math.max(0, landed - departed),

@@ -23,24 +23,26 @@ type Tab = 'manifest' | 'crops' | 'model';
  * @param props.min - Inclusive floor (default 0).
  * @param props.onChange - Next count.
  * @param props.touch - Larger hit targets for the city-first sheet.
+ * @param props.label - What is being counted (for screen readers).
  */
 function Stepper(props: {
   value: number;
   min?: number;
   onChange: (n: number) => void;
   touch: boolean;
+  label: string;
 }): React.ReactElement {
   const min = props.min ?? 0;
   const box = props.touch
     ? 'min-w-11 min-h-11 text-base'
-    : 'w-5 h-5';
+    : 'w-6 h-6';
   return (
     <div className="flex items-center gap-1">
       <button
         type="button"
         onClick={() => props.onChange(Math.max(min, props.value - 1))}
         className={`${box} border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)]`}
-        aria-label="Decrease"
+        aria-label={`Decrease ${props.label}`}
       >
         −
       </button>
@@ -49,12 +51,32 @@ function Stepper(props: {
         type="button"
         onClick={() => props.onChange(props.value + 1)}
         className={`${box} border border-[var(--line)] text-[var(--dim)] hover:text-[var(--text)]`}
-        aria-label="Increase"
+        aria-label={`Increase ${props.label}`}
       >
         +
       </button>
     </div>
   );
+}
+
+/**
+ * Freeze the sim clock while a pointer drags a slider. Without this, a
+ * synodic window can arrive mid-drag: `sim.window` advances, the panel
+ * silently retargets to the NEXT window, and the rest of the drag writes a
+ * manifest the player never intended.
+ * @returns Pointer handlers to spread onto a range input.
+ */
+function useDragHold(): {
+  onPointerDown: () => void;
+  onPointerUp: () => void;
+  onPointerCancel: () => void;
+} {
+  const setClockHold = useSimStore((s) => s.setClockHold);
+  return {
+    onPointerDown: () => setClockHold(true),
+    onPointerUp: () => setClockHold(false),
+    onPointerCancel: () => setClockHold(false),
+  };
 }
 
 /** Stepper row for one structure in the manifest. */
@@ -72,7 +94,7 @@ function StructRow(props: {
         <span className="text-[var(--dim)] truncate block">{spec.name}</span>
       </Explainable>
       <span className="num w-10 text-right text-[var(--dim)]">{(spec.massKg / 1000).toFixed(1)}t</span>
-      <Stepper value={props.count} onChange={props.onChange} touch={props.touch} />
+      <Stepper value={props.count} onChange={props.onChange} touch={props.touch} label={spec.name} />
     </div>
   );
 }
@@ -85,6 +107,7 @@ function KgRow(props: {
   tooltip: string;
   onChange: (v: number) => void;
 }): React.ReactElement {
+  const hold = useDragHold();
   return (
     <div className="text-[10px] py-0.5">
       <div className="flex justify-between">
@@ -101,6 +124,8 @@ function KgRow(props: {
         value={props.value}
         onChange={(e) => props.onChange(Number(e.target.value))}
         className="w-full h-2"
+        aria-label={`${props.label}, kilograms`}
+        {...hold}
       />
     </div>
   );
@@ -120,6 +145,7 @@ export function BuildPanel(props: { touch?: boolean; className?: string }): Reac
   const showOverlay = useSimStore((s) => s.showOverlay);
   const setShowOverlay = useSimStore((s) => s.setShowOverlay);
   const [tab, setTab] = useState<Tab>('manifest');
+  const hold = useDragHold();
 
   const nextWindow = sim.window + 1;
   const manifest: Manifest = sim.manifests[nextWindow] ?? emptyManifest();
@@ -200,6 +226,7 @@ export function BuildPanel(props: { touch?: boolean; className?: string }): Reac
                   value={manifest.crew}
                   onChange={(n) => update({ crew: n })}
                   touch={touch}
+                  label="new crew"
                 />
               </div>
             </div>
@@ -228,6 +255,8 @@ export function BuildPanel(props: { touch?: boolean; className?: string }): Reac
                   value={Math.round((sim.cropMix[c.id] ?? 0) * 100)}
                   onChange={(e) => setCropMix({ ...sim.cropMix, [c.id]: Number(e.target.value) / 100 })}
                   className="w-full h-2"
+                  aria-label={`${c.name} area share`}
+                  {...hold}
                 />
               </div>
             ))}
@@ -243,7 +272,7 @@ export function BuildPanel(props: { touch?: boolean; className?: string }): Reac
                 </Explainable>
                 <span className="num">{sim.params.starshipPayloadT} t</span>
               </div>
-              <input type="range" min={50} max={200} step={5} value={sim.params.starshipPayloadT} onChange={(e) => setParams({ starshipPayloadT: Number(e.target.value) })} className="w-full h-2" />
+              <input type="range" min={50} max={200} step={5} value={sim.params.starshipPayloadT} onChange={(e) => setParams({ starshipPayloadT: Number(e.target.value) })} className="w-full h-2" aria-label="Starship payload, tonnes" {...hold} />
             </div>
             <div>
               <div className="flex justify-between">
@@ -252,14 +281,14 @@ export function BuildPanel(props: { touch?: boolean; className?: string }): Reac
                 </Explainable>
                 <span className="num">{sim.params.methaloxPerShipT} t</span>
               </div>
-              <input type="range" min={600} max={1500} step={50} value={sim.params.methaloxPerShipT} onChange={(e) => setParams({ methaloxPerShipT: Number(e.target.value) })} className="w-full h-2" />
+              <input type="range" min={600} max={1500} step={50} value={sim.params.methaloxPerShipT} onChange={(e) => setParams({ methaloxPerShipT: Number(e.target.value) })} className="w-full h-2" aria-label="Methalox per ship, tonnes" {...hold} />
             </div>
             <div>
               <div className="flex justify-between">
                 <span className="text-[var(--dim)]">Cargo ships / window</span>
                 <span className="num">{sim.params.shipsPerWindow}</span>
               </div>
-              <input type="range" min={1} max={10} step={1} value={sim.params.shipsPerWindow} onChange={(e) => setParams({ shipsPerWindow: Number(e.target.value) })} className="w-full h-2" />
+              <input type="range" min={1} max={10} step={1} value={sim.params.shipsPerWindow} onChange={(e) => setParams({ shipsPerWindow: Number(e.target.value) })} className="w-full h-2" aria-label="Cargo ships per window" {...hold} />
             </div>
             <div>
               <div className="flex justify-between">
@@ -268,7 +297,7 @@ export function BuildPanel(props: { touch?: boolean; className?: string }): Reac
                 </Explainable>
                 <span className="num">{sim.params.returnShipsPerWindow}</span>
               </div>
-              <input type="range" min={0} max={4} step={1} value={sim.params.returnShipsPerWindow} onChange={(e) => setParams({ returnShipsPerWindow: Number(e.target.value) })} className="w-full h-2" />
+              <input type="range" min={0} max={4} step={1} value={sim.params.returnShipsPerWindow} onChange={(e) => setParams({ returnShipsPerWindow: Number(e.target.value) })} className="w-full h-2" aria-label="Return ships per window" {...hold} />
             </div>
             <div className="flex items-center gap-2 pt-2 border-t border-[var(--line)]">
               <input

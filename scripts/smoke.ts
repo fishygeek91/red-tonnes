@@ -9,9 +9,9 @@ import { decodeRunLog, encodeRunLog } from '../src/lib/share/encode';
 import { ghostFromReplay, ghostFuelLeadSols, ghostSnapshotAt, raceVerdict } from '../src/lib/share/ghost';
 import { appendRunAction, emptyRunLog, replayRun } from '../src/lib/share/recording';
 import { scorecard } from '../src/lib/share/scorecard';
-import { forecastHorizonSols, nextDepartureSol, runForecast } from '../src/lib/sim/forecast';
+import { diffForecasts, forecastHorizonSols, nextDepartureSol, runForecast } from '../src/lib/sim/forecast';
 import { missionBrief } from '../src/lib/sim/brief';
-import { topBarStats } from '../src/lib/sim/derive';
+import { missedWindowTest, topBarStats } from '../src/lib/sim/derive';
 import { formatPostMortem, investigate, type PostMortem } from '../src/lib/sim/postmortem';
 import { MANIFEST_TEMPLATES, createInitialState, type SimState } from '../src/lib/sim/state';
 import type { SimActions } from '../src/lib/sim/step';
@@ -154,6 +154,23 @@ async function shareChecks(): Promise<void> {
         ],
       }),
     ),
+    decodeRunLog(
+      await encodeRunLog({
+        ...shared,
+        actions: [
+          { sol: 0, manifests: { 1: { ...MANIFEST_TEMPLATES[0].manifest, crew: 2.5 } } },
+        ],
+      }),
+    ),
+    decodeRunLog(
+      await encodeRunLog({
+        ...shared,
+        actions: [
+          { sol: 100, params: { shipsPerWindow: 4 } },
+          { sol: 50, params: { shipsPerWindow: 3 } },
+        ],
+      }),
+    ),
   ]);
   const hostileRejected = hostile.every((d) => d === null);
   console.log('hostile payloads rejected:', hostileRejected);
@@ -190,7 +207,7 @@ async function shareChecks(): Promise<void> {
   const selfVerdict = raceVerdict(ghost, replayed);
   const verdictOk = selfVerdict === null || selfVerdict === '🏁 Dead heat with the ghost';
 
-  // Decided-verdict branch: the seed-7 demo run banks return fuel (sol 1124),
+  // Decided-verdict branch: the seed-7 demo run banks return fuel (sol 1123),
   // so racing it against its own ghost must land exactly on a dead heat.
   const fueledGhost = ghostFromReplay(
     { ...emptyRunLog(7, 'arcadia', 'balanced'), finalSol: a.sol },
@@ -338,6 +355,41 @@ async function shareChecks(): Promise<void> {
   const fcLost = runForecast(stranded);
   const lostOk = fcLost.verdict === 'lost' && fcLost.snapshots.length === 0;
 
+  // Plan deltas: diffing a forecast against itself must report no change,
+  // and beefing up the window-1 ISRU manifest must measurably improve the
+  // fuel future (earlier fuel-ready sol or more tonnes at the burn).
+  let early: SimState = createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'balanced' });
+  early = step(early, 100, {});
+  const before = runForecast(early, forecastHorizonSols(early.sol));
+  const selfDiff = diffForecasts(before, before);
+  const boosted = step(early, 0, {
+    manifests: {
+      1: {
+        ...MANIFEST_TEMPLATES[0].manifest,
+        structures: {
+          ...MANIFEST_TEMPLATES[0].manifest.structures,
+          sabatier: 3,
+          electrolyzer: 4,
+          cryoPlant: 4,
+          nuclear: 6,
+        },
+        crew: 4,
+      },
+    },
+  });
+  const after = runForecast(boosted, forecastHorizonSols(boosted.sol));
+  const orderDelta = diffForecasts(before, after);
+  const fuelImproved =
+    (after.fuelReadySol !== null &&
+      (before.fuelReadySol === null || after.fuelReadySol < before.fuelReadySol)) ||
+    after.fuelAtBurnKg > before.fuelAtBurnKg;
+  const deltaOk = !selfDiff.changed && orderDelta.changed && fuelImproved;
+
+  // Horizon-end inventory must not masquerade as fuel-at-burn when the burn
+  // is past the forecast window.
+  const fcShort = runForecast(fresh, 100);
+  const beyondOk = fcShort.verdict === 'beyond' && fcShort.fuelAtBurnKg === 0;
+
   console.log('\n--- flight-director checks ---');
   console.log('forecast === lived future (bit-identical):', oracle);
   console.log('forecast leaves the live state untouched:', pure);
@@ -346,12 +398,53 @@ async function shareChecks(): Promise<void> {
   console.log('demo burn called from sol 0 (adaptive horizon):', freshCalled);
   console.log('food-first stranding called from sol 700:', doomCalled, `(${fcDoom.verdict})`);
   console.log('lost city short-circuits:', lostOk);
+  console.log('plan delta (self-diff silent, ISRU order improves fuel):', deltaOk);
+  console.log('beyond-horizon fuelAtBurnKg is 0:', beyondOk);
+  for (const l of orderDelta.lines) {
+    console.log(`  [delta ${l.tone}] ${l.text}`);
+  }
   for (const f of fcBurn.findings) {
     console.log(`  [${f.tone}] ${f.text}`);
   }
-  if (!oracle || !pure || !schedOk || !demoCalled || !freshCalled || !doomCalled || !lostOk) {
+  if (!oracle || !pure || !schedOk || !demoCalled || !freshCalled || !doomCalled || !lostOk || !deltaOk || !beyondOk) {
     throw new Error('flight-director forecast checks failed');
   }
+
+  // ---- engine bookkeeping (audit follow-ups) --------------------------------
+  // RETURN FUEL READY must re-arm after a quota increase, even if an old
+  // milestone is still in the event log.
+  let tinyQuota: SimState = createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'balanced' });
+  tinyQuota = step(tinyQuota, 0, { params: { methaloxPerShipT: 1 } });
+  tinyQuota = step(tinyQuota, 800, {});
+  if (tinyQuota.fuelReadySol === null) {
+    throw new Error('tiny quota never set fuelReadySol');
+  }
+  tinyQuota = step(tinyQuota, 0, { params: { methaloxPerShipT: 50 } });
+  tinyQuota = step(tinyQuota, 3, {});
+  if (tinyQuota.endState !== 'RETURN FUEL READY') {
+    throw new Error(`raised quota did not re-arm RETURN FUEL READY (endState=${tinyQuota.endState || 'running'})`);
+  }
+
+  // missedWindowTest must not treat eaten Earth rations as local production.
+  let onRations: SimState = createInitialState({ seed: 1, siteId: 'arcadia', templateId: 'propellant' });
+  onRations = step(onRations, 60, {});
+  const mw = missedWindowTest(onRations);
+  const lastSnap = onRations.history[onRations.history.length - 1];
+  if (lastSnap.earthFoodFraction > 0.5 && mw.foodRunwaySols > 10000) {
+    throw new Error(`missedWindowTest counted Earth rations as grown food (${mw.foodRunwaySols} sols)`);
+  }
+
+  // Top-bar departure countdown must look past the burn already taken.
+  const late = step(createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'balanced' }), 1400, {});
+  const lateStats = topBarStats(late);
+  if (lateStats.solsToNextDeparture < 100) {
+    throw new Error(`departure countdown stuck at ${lateStats.solsToNextDeparture} sols after the window-1 burn`);
+  }
+
+  console.log('\n--- engine bookkeeping ---');
+  console.log('raised quota re-arms RETURN FUEL READY:', tinyQuota.endState === 'RETURN FUEL READY');
+  console.log('missed-window food runway (propellant, 60 sols):', mw.foodRunwaySols.toFixed(0));
+  console.log('departure countdown at sol 1400:', lateStats.solsToNextDeparture);
 }
 
 void shareChecks();

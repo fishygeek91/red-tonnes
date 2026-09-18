@@ -9,6 +9,7 @@ import { decodeRunLog, encodeRunLog } from '../src/lib/share/encode';
 import { ghostFromReplay, ghostFuelLeadSols, ghostSnapshotAt, raceVerdict } from '../src/lib/share/ghost';
 import { appendRunAction, emptyRunLog, replayRun } from '../src/lib/share/recording';
 import { scorecard } from '../src/lib/share/scorecard';
+import { forecastHorizonSols, nextDepartureSol, runForecast } from '../src/lib/sim/forecast';
 import { missionBrief } from '../src/lib/sim/brief';
 import { topBarStats } from '../src/lib/sim/derive';
 import { formatPostMortem, investigate, type PostMortem } from '../src/lib/sim/postmortem';
@@ -296,6 +297,60 @@ async function shareChecks(): Promise<void> {
   console.log('blackout kills plant and life tones:', blackoutSilent);
   if (!audioFinite || !stormLouder || !stormDarker || !blackoutSilent) {
     throw new Error('audio-bed parameter map failed');
+  }
+
+  // ---- Flight Director forecast checks ----------------------------------------
+  // The forecast's core promise: it is the REAL engine run ahead, so its
+  // projected snapshots must be bit-identical to actually living those sols.
+  let mid: SimState = createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'balanced' });
+  mid = step(mid, 800, {});
+  const midBefore = JSON.stringify(mid);
+  const fc = runForecast(mid, 200);
+  const lived = step(mid, 200, {});
+  const oracle =
+    JSON.stringify(fc.snapshots) === JSON.stringify(lived.history.slice(mid.history.length));
+  const pure = JSON.stringify(mid) === midBefore;
+
+  // Departure schedule arithmetic must match the engine (w×759+600, w>=1).
+  const schedOk =
+    nextDepartureSol(0) === 1359 &&
+    nextDepartureSol(1358) === 1359 &&
+    nextDepartureSol(1359) === 2118;
+
+  // The demo seed makes its sol-1359 burn: the forecast must call it from sol 800.
+  const fcBurn = runForecast(mid);
+  const demoCalled = fcBurn.verdict === 'burn' && fcBurn.fuelReadySol !== null;
+
+  // Adaptive horizon: even from sol 0 the HUD's horizon must reach past the
+  // first burn, so the verdict is 'burn' the moment the city lands.
+  const fresh = createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'balanced' });
+  const fcFresh = runForecast(fresh, forecastHorizonSols(fresh.sol));
+  const freshCalled = fcFresh.verdict === 'burn' && forecastHorizonSols(0) === 1419;
+
+  // The documented "Food first" stranding: the forecast must see it coming
+  // hundreds of sols early (miss or terminal loss, never "on track").
+  let doomed: SimState = createInitialState({ seed: 7, siteId: 'arcadia', templateId: 'food' });
+  doomed = step(doomed, 700, {});
+  const fcDoom = runForecast(doomed);
+  const doomCalled = fcDoom.verdict === 'miss' || fcDoom.verdict === 'lost';
+
+  // A lost city has no future: the forecast must return the lost verdict cheaply.
+  const fcLost = runForecast(stranded);
+  const lostOk = fcLost.verdict === 'lost' && fcLost.snapshots.length === 0;
+
+  console.log('\n--- flight-director checks ---');
+  console.log('forecast === lived future (bit-identical):', oracle);
+  console.log('forecast leaves the live state untouched:', pure);
+  console.log('departure schedule arithmetic:', schedOk);
+  console.log('demo burn called from sol 800:', demoCalled, `(fuel ready ~s${fcBurn.fuelReadySol})`);
+  console.log('demo burn called from sol 0 (adaptive horizon):', freshCalled);
+  console.log('food-first stranding called from sol 700:', doomCalled, `(${fcDoom.verdict})`);
+  console.log('lost city short-circuits:', lostOk);
+  for (const f of fcBurn.findings) {
+    console.log(`  [${f.tone}] ${f.text}`);
+  }
+  if (!oracle || !pure || !schedOk || !demoCalled || !freshCalled || !doomCalled || !lostOk) {
+    throw new Error('flight-director forecast checks failed');
   }
 }
 

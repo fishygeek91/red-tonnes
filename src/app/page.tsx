@@ -10,6 +10,7 @@ import dynamic from 'next/dynamic';
 import { BuildPanel } from '../components/BuildPanel';
 import { EndBanner } from '../components/EndBanner';
 import { ExplainableProvider } from '../components/Explainable';
+import { FlightDirector } from '../components/FlightDirector';
 import { GhostHud } from '../components/GhostHud';
 import { Ledgers } from '../components/Ledgers';
 import { Briefing } from '../components/mobile/Briefing';
@@ -59,6 +60,7 @@ function DesktopShell(props: { city: React.ReactNode }): React.ReactElement {
           <EndBanner />
           <SharedRunNotice />
           <GhostHud />
+          <FlightDirector />
         </div>
         <Ledgers />
       </main>

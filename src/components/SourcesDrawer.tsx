@@ -57,6 +57,7 @@ export function SourcesDrawer(): React.ReactElement | null {
         <Row term="Mars surface pressure" value="6.36 mbar mean" source="NASA NSSDC Mars fact sheet." />
         <Row term="Synodic period" value="~779.9 days ≈ 759 sols" source="Orbital mechanics; the 26-month cargo cadence." />
         <Row term="Crew metabolism" value="0.84 kg O2 · 1.04 kg CO2 · 3,000 kcal /p/sol" source="NASA BVAD (Baseline Values and Assumptions Document) class values." />
+        <Row term="Water recycling" value="93% recovered" source="NASA 2023: ISS total water recovery 93-94% before the Brine Processor Assembly, 98% with it. Using the same fraction for crop, compost and digester water is ASSUMED." />
         <Row term="Crop productivity" value="e.g. potato ~37, wheat ~20 g/m²/sol" source="Wheeler 2017, Open Agriculture (controlled-environment ranges); mid-range chosen, not best-case." />
         <Row term="Compost cycle" value="55 °C+, 70 sols to maturity" source="US EPA / on-farm composting handbooks: ≥3 days thermophilic for pathogen kill, 60–120 days maturation." />
         <Row term="Regolith perchlorate" value="~0.5 wt%, wash 3 L/kg" source="Hecht et al. 2009 (Phoenix); wash ratio ASSUMED." />

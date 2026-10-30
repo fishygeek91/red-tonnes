@@ -24,6 +24,9 @@
  *      for >=3 days for pathogen kill; 60-120 day maturation typical.
  *  [9] Hecht et al. (2009), Science: ~0.4-0.6 wt% perchlorate in Phoenix
  *      lander soils.
+ * [10] NASA (2023), 'NASA Achieves Water Recovery Milestone on International
+ *      Space Station': ISS total water recovery 93-94% before the Brine
+ *      Processor Assembly, 98% with it.
  */
 
 // ---------------------------------------------------------------------------
@@ -182,7 +185,7 @@ export const URINE_N_FRACTION = 0.01;
 export const SOLID_WASTE_N_FRACTION = 0.015;
 /** P in solid waste + urine combined, kg per person-sol. ASSUMED: 1.5 g/person-sol. */
 export const HUMAN_P_KG_PER_SOL = 0.0015;
-/** Water-recycler recovery fraction (urine + graywater + humidity). ASSUMED: 0.93 ISS-class. */
+/** Water-recycler recovery fraction (urine + graywater + humidity). Source [10]: 0.93 is the ISS figure before the Brine Processor (98% with it). ASSUMED: the same fraction applies to the crop, compost and digester water loops. */
 export const WATER_RECYCLE_FRACTION = 0.93;
 /** Habitat pressurized volume per person, m3 (long-duration). ASSUMED: 60 m3/person BVAD habitable-volume class. */
 export const HABITAT_M3_PER_PERSON = 60;
